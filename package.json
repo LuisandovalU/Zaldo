@@ -11,6 +11,8 @@
     "start": "tsx src/index.ts",
     "test": "tsx --test test/zaldo.test.ts test/admin.test.ts test/landing.test.ts",
     "admin:hash": "tsx scripts/hash-password.ts",
+    "landing:publish": "tsx scripts/publish-landing.ts",
+    "landing:watch": "tsx scripts/publish-landing.ts --watch",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
