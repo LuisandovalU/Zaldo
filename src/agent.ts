@@ -749,7 +749,7 @@ const CLAIMS_ACTION =
 
 /** El modelo rechaza un cobro por su cuenta ("el mínimo es 1 peso"). Eso solo lo decide la caja. */
 const REFUSES_CHARGE =
-  /(no (puedo|es posible|se puede)|no hago)[^.!?\n]{0,40}(cobr|generar)|(monto )?m[ií]nimo (es|debe|de|para)|fuera de (los )?rangos|no (puedo )?acept(o|ar) decimales|monto v[aá]lido/i;
+  /s[oó]lo (puedo|se puede|puedes) cobrar|(no (puedo|es posible|se puede)|no hago)[^.!?\n]{0,40}(cobr|generar)|(monto )?m[ií]nimo (es|debe|de|para)|fuera de (los )?rangos|no (puedo )?acept(o|ar) decimales|monto v[aá]lido/i;
 
 /** El modelo pregunta por un celular. Para un cobro normal no hace falta: sale QR. */
 const ASKS_PHONE = /\?[^?]*$/;
