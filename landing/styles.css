@@ -2411,14 +2411,100 @@ summary:focus-visible {
 }
 
 .problems-grid {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 20px;
   perspective: 1100px;
 }
 
+@media (min-width: 721px) {
+  .problems-grid > .prob-card:nth-of-type(1) { grid-column: 1; grid-row: 1; }
+  .problems-grid > .prob-card:nth-of-type(2) { grid-column: 2; grid-row: 2; }
+  .problems-grid > .prob-card:nth-of-type(3) { grid-column: 1; grid-row: 3; }
+  .problems-grid > .prob-card:nth-of-type(4) { grid-column: 2; grid-row: 4; }
+}
+
+@media (max-width: 720px) {
+  .problems-grid {
+    grid-template-columns: 1fr;
+    gap: 46px;
+  }
+}
+
+.prob-paths {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.prob-path-guide {
+  fill: none;
+  stroke: rgba(10, 10, 12, 0.09);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.prob-path-dash {
+  fill: none;
+  stroke: rgba(10, 10, 12, 0.9);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 8 8;
+  animation: probPathFlow 1.5s linear infinite;
+}
+
+.prob-path-arrow {
+  fill: none;
+  stroke: #0a0a0c;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.prob-path-node {
+  fill: #ffffff;
+  stroke: #0a0a0c;
+  stroke-width: 2;
+}
+
+.prob-path-runner-halo {
+  fill: rgba(10, 10, 12, 0.14);
+}
+
+.prob-path-runner {
+  fill: #0a0a0c;
+}
+
+@keyframes probPathFlow {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prob-path-dash {
+    animation: none;
+  }
+
+  .prob-path-runner-group {
+    display: none;
+  }
+}
+
 /* Scroll-Driven Problem Cards — Bento visual con escena animada por frames (estilo Remotion) */
 .prob-card {
+  position: relative;
+  z-index: 2;
   --card-p: 0;
   display: flex;
   flex-direction: column;

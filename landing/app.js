@@ -93,6 +93,8 @@ hydrateReicons();
 
 // Astryx Scroll Progress Rail + Sticky Navbar Elevation + Scroll-Driven #problemas Choreography
 const problemsSection = document.getElementById('problemas');
+const problemsGrid = document.getElementById('problems-grid');
+const problemsPathsSvg = document.getElementById('problems-paths');
 const problemsScrollFill = document.getElementById('problems-scroll-fill');
 const navLinks = navLinksWrap ? Array.from(navLinksWrap.querySelectorAll('a')) : [];
 
@@ -101,11 +103,11 @@ const layout = {
   maxScroll: 1,
   problemsDocTop: 0,
   problemsTotalTravel: 1,
-  probCards: Array.from(document.querySelectorAll('.prob-card')).map((el, idx) => ({
+  probCards: Array.from(document.querySelectorAll('.prob-card')).map((el) => ({
     el,
     docTop: 0,
     height: 360,
-    rowOffset: (idx % 2) * 36,
+    rowOffset: 0,
     lastP: '',
     lastEngaged: null,
   })),
@@ -113,8 +115,87 @@ const layout = {
   pickerRects: new WeakMap(),
   lastScrollProgress: '',
   lastProblemsP: '',
+  lastPathsSig: '',
   lastScrolled: null,
 };
+
+function renderProblemsPaths() {
+  if (!problemsGrid || !problemsPathsSvg || layout.probCards.length < 2) return;
+  const gw = Math.round(problemsGrid.offsetWidth);
+  const gh = Math.round(problemsGrid.offsetHeight);
+  if (!gw || !gh) return;
+
+  const boxes = layout.probCards.map((m) => ({
+    x: Math.round(m.el.offsetLeft),
+    y: Math.round(m.el.offsetTop),
+    w: Math.round(m.el.offsetWidth),
+    h: Math.round(m.el.offsetHeight),
+  }));
+  const sig =
+    `${gw}x${gh}|${prefersReducedMotion ? '1' : '0'}|` +
+    boxes.map((b) => `${b.x},${b.y},${b.w},${b.h}`).join(';');
+  if (sig === layout.lastPathsSig) return;
+  layout.lastPathsSig = sig;
+
+  problemsPathsSvg.setAttribute('viewBox', `0 0 ${gw} ${gh}`);
+
+  const parts = [];
+  for (let i = 0; i < boxes.length - 1; i += 1) {
+    const a = boxes[i];
+    const b = boxes[i + 1];
+    const staggered = Math.abs(a.x - b.x) > 40;
+    let d = '';
+    let sx = 0;
+    let sy = 0;
+    let ex = 0;
+    let ey = 0;
+
+    if (staggered) {
+      const dir = b.x > a.x ? 1 : -1;
+      sx = dir === 1 ? a.x + a.w + 10 : a.x - 10;
+      sy = Math.round(a.y + a.h * 0.46);
+      ex = Math.round(b.x + b.w * 0.5);
+      ey = Math.round(b.y - 12);
+      const horiz = Math.abs(ex - sx);
+      const vert = Math.max(0, ey - sy);
+      const r = Math.min(44, Math.max(12, Math.floor(Math.min(horiz, vert) * 0.42)));
+      const curveEndX = ex - dir * r;
+      const curveEndY = sy + r;
+      d = `M ${sx} ${sy} L ${curveEndX} ${sy} Q ${ex} ${sy} ${ex} ${curveEndY} L ${ex} ${ey - 1}`;
+    } else {
+      ex = Math.round(b.x + b.w * 0.5);
+      sx = ex;
+      sy = Math.round(a.y + a.h + 8);
+      ey = Math.round(b.y - 8);
+      if (ey <= sy + 8) continue;
+      d = `M ${sx} ${sy} L ${ex} ${ey - 1}`;
+    }
+
+    const arrowPath = `M ${ex - 5} ${ey - 6} L ${ex} ${ey} L ${ex + 5} ${ey - 6}`;
+    const dur = staggered ? '2.8s' : '1.4s';
+    const begin = `${(i * 0.65).toFixed(2)}s`;
+    const runnerMarkup = prefersReducedMotion
+      ? ''
+      : `<g class="prob-path-runner-group" opacity="0">` +
+        `<circle cx="0" cy="0" r="6" class="prob-path-runner-halo"/>` +
+        `<circle cx="0" cy="0" r="3.2" class="prob-path-runner"/>` +
+        `<animateMotion dur="${dur}" begin="${begin}" repeatCount="indefinite" path="${d}"/>` +
+        `<animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.14;0.84;1" dur="${dur}" begin="${begin}" repeatCount="indefinite"/>` +
+        `</g>`;
+
+    parts.push(
+      `<g class="prob-path-seg">` +
+      `<path class="prob-path-guide" d="${d}"/>` +
+      `<path class="prob-path-dash" d="${d}"/>` +
+      `<path class="prob-path-arrow" d="${arrowPath}"/>` +
+      `<circle class="prob-path-node" cx="${sx}" cy="${sy}" r="4.2"/>` +
+      runnerMarkup +
+      `</g>`
+    );
+  }
+
+  problemsPathsSvg.innerHTML = parts.join('');
+}
 
 function measureLayout() {
   const sy = window.scrollY || 0;
@@ -133,6 +214,8 @@ function measureLayout() {
     m.docTop = r.top + sy;
     m.height = r.height || 360;
   });
+
+  renderProblemsPaths();
 
   navLinks.forEach((link) => {
     layout.navRects.set(link, {
