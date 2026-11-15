@@ -4,13 +4,16 @@ import {
   chargeCard,
   DEFAULT_CONCEPT,
   isNumberLabel,
+  ownBank,
   PAYER_OPEN,
   PAYER_SELF,
   prettyPhone,
   runAgent,
+  testCapFor,
   type AgentServices,
   type Completer,
 } from "./agent.js";
+import type { AccountPey } from "./cuenta.js";
 import { frequencyLabel, goalLine, nextOccurrence, settleDebts, shortDate } from "./caja.js";
 import type { AppConfig } from "./config.js";
 import type { Inbound, Outbound } from "./inbound.js";
@@ -20,7 +23,6 @@ import {
   PeyError,
   type LinkInput,
   type LinkResult,
-  type PeyBankAccount,
   type PeyPaymentLink,
   type PeyTransaction,
   type PeyTransactionPage,
@@ -31,7 +33,7 @@ import {
 } from "./pey.js";
 import { Store, type Charge, type ChargeMethod, type Recurring, type TurnTool } from "./store.js";
 
-export interface PeyPort {
+export interface PeyPort extends AccountPey {
   push(input: PushInput): Promise<PushResult>;
   qr(input: QrInput): Promise<QrResult>;
   link(input: LinkInput): Promise<LinkResult>;
@@ -42,7 +44,6 @@ export interface PeyPort {
   /** Lo que pey registró de verdad, para "mis últimos pagos". */
   transactionsByApiKey?(nextToken?: string): Promise<PeyTransactionPage>;
   transactionsByBankAccount?(bankAccountId: string, nextToken?: string): Promise<PeyTransactionPage>;
-  bankAccount?(id: string): Promise<PeyBankAccount | null>;
 }
 
 export interface FlowDeps {
@@ -145,6 +146,7 @@ async function sendPush(
   expirationSec: number,
 ): Promise<{ expirationSec: number }> {
   if (!charge.payerPhone) throw new Error("Falta el celular");
+  const own = ownBank(deps.store, charge.owner);
   const input: PushInput = {
     amountCents: charge.amountCents,
     phone: charge.payerPhone,
@@ -152,6 +154,8 @@ async function sendPush(
     numRef,
     chargeId: charge.id,
     expirationSec,
+    // Con cuenta propia activa, el cobro cae directo en el banco de quien cobra.
+    ...(own ? { bankAccountId: own.id } : {}),
   };
   let used = expirationSec;
   let sent: PushResult;
@@ -167,6 +171,7 @@ async function sendPush(
   deps.store.updateCharge({
     ...current,
     expiresAt: deps.now() + used * 1000,
+    ...(own ? { bankAccountId: own.id } : {}),
     peyTransactionId: sent.transactionId || current.peyTransactionId,
     peyExternalId: sent.codiId || current.peyExternalId,
   });
@@ -248,17 +253,23 @@ async function confirm(deps: FlowDeps, owner: string, chargeId: string): Promise
     }
     if (charge.method === "qr") {
       if (!numRef) throw new Error("Falta la referencia");
+      const own = ownBank(deps.store, owner);
       const sent = await deps.pey.qr({
         amountCents: charge.amountCents,
         concept: peyConcept(charge.concept),
         numRef,
         chargeId: charge.id,
         expirationSec: qrSeconds,
+        ...(own ? { bankAccountId: own.id } : {}),
       });
       if (!sent.qrString) throw new Error("Pey no devolvió el QR");
       const png = await (deps.renderQr ?? renderQrPng)(sent.qrString);
       const current = deps.store.getCharge(charge.id) ?? locked;
-      deps.store.updateCharge({ ...current, peyExternalId: sent.id || current.peyExternalId });
+      deps.store.updateCharge({
+        ...current,
+        peyExternalId: sent.id || current.peyExternalId,
+        ...(own ? { bankAccountId: own.id } : {}),
+      });
       const what = charge.openAmount ? "de monto abierto" : `por ${amount}`;
       const how = charge.openAmount
         ? "Quien paga lo escanea desde la app de su banco, en la opción CoDi, y escribe el monto."
@@ -409,9 +420,10 @@ function tooFast(store: Store, owner: string, now: number): { limited: boolean; 
 }
 
 /** Lo que el agente puede preguntarle a pey mientras conversa. */
-function servicesOf(deps: FlowDeps): AgentServices {
+function servicesOf(deps: FlowDeps, owner: string): AgentServices {
   const { pey, config } = deps;
-  const accountId = config.peyBankAccountId ?? null;
+  // Los pagos y la cuenta que se consultan son los de la cuenta donde esa persona recibe.
+  const accountId = ownBank(deps.store, owner)?.id ?? config.peyBankAccountId ?? null;
   return {
     refresh: (owner) => refreshOwner(deps, owner),
     payments:
@@ -452,7 +464,7 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
             toolCalls: [{ id: "atajo", type: "function", function: { name: direct.name, arguments: JSON.stringify(direct.args) } }],
           })
         : deps.complete,
-      services: servicesOf(deps),
+      services: servicesOf(deps, owner),
     });
   } catch (error) {
     // El modelo no contestó (red, saturación): la persona no se queda sin respuesta.
@@ -462,7 +474,7 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
     return [{ kind: "text", to: owner, text: reply }];
   }
   if (result.charge) {
-    const card = chargeCard(result.charge, !!deps.config.testMaxCents, now);
+    const card = chargeCard(result.charge, !!testCapFor(deps.store, deps.config, owner), now);
     // Si en el mismo mensaje pidió algo más (guardar un producto, el corte), eso va antes de la tarjeta.
     const before = result.reply?.trim();
     remember(deps.store, owner, "assistant", before ? `${before}\n\n${card}` : card, now, result.tools);

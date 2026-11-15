@@ -53,6 +53,8 @@ export interface Charge {
   repeat?: Frequency;
   /** El cobro recurrente que lo mandó, si salió solo. */
   recurringId?: string;
+  /** La cuenta propia de quien cobra a la que se mandó este cobro, si tiene una activa. */
+  bankAccountId?: string;
 }
 
 export type Frequency = "semanal" | "quincenal" | "mensual";
@@ -116,6 +118,26 @@ export interface Profile {
   dailyGoalCents?: number | null;
   /** Lo que la persona pidió recordar: horarios, costumbres, cómo le gusta cobrar. */
   facts?: string[];
+  /** La cuenta donde recibe sus cobros, si registró una. */
+  bank?: BankLink;
+  /** Cuentas que ha registrado en total: hay un tope. */
+  bankCount?: number;
+}
+
+/**
+ * La cuenta de una persona, registrada en pey. Aquí NO vive la CLABE: solo el
+ * id que devolvió pey y sus últimos 4 dígitos.
+ */
+export interface BankLink {
+  id: string;
+  last4: string;
+  holder: string;
+  status: "PENDING" | "PROCESSING" | "ACTIVE" | "ERROR";
+  error: string | null;
+  registeredAt: number;
+  checkedAt?: number;
+  /** Ya se le avisó por WhatsApp de su estado actual. */
+  announced?: boolean;
 }
 
 export interface Contact {
@@ -197,6 +219,11 @@ export class Store {
   complete(key: string): void {
     this.data.claims[key] = "done";
     this.save();
+  }
+
+  /** ¿Esa llave ya se usó? (No la aparta.) */
+  claimed(key: string): boolean {
+    return this.data.claims[key] !== undefined;
   }
 
   release(key: string): void {
@@ -312,6 +339,10 @@ export class Store {
     if (index === -1) this.data.recurrings.push(plan);
     else this.data.recurrings[index] = plan;
     this.save();
+  }
+
+  listProfiles(): Profile[] {
+    return [...this.data.profiles];
   }
 
   getProfile(owner: string): Profile {

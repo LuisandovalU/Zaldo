@@ -7,6 +7,8 @@ export interface PushInput {
   numRef: string;
   chargeId: string;
   expirationSec: number;
+  /** La cuenta que recibe este cobro. Sin ella, la del cliente (PeyClientOptions) o la ligada a la llave. */
+  bankAccountId?: string | null;
 }
 
 export interface QrInput {
@@ -15,6 +17,7 @@ export interface QrInput {
   numRef: string;
   chargeId: string;
   expirationSec: number;
+  bankAccountId?: string | null;
 }
 
 export interface LinkInput {
@@ -229,8 +232,9 @@ export class PeyClient {
     private readonly options: PeyClientOptions = {},
   ) {}
 
-  private receiver(): { bankAccountId?: string } {
-    return this.options.bankAccountId ? { bankAccountId: this.options.bankAccountId } : {};
+  private receiver(own?: string | null): { bankAccountId?: string } {
+    const id = own || this.options.bankAccountId;
+    return id ? { bankAccountId: id } : {};
   }
 
   /** POST /bank-account: registra una CLABE bajo esta API key para recibir CoDi. */
@@ -251,7 +255,7 @@ export class PeyClient {
       concept: input.concept,
       expiration: input.expirationSec,
       numRef: input.numRef,
-      ...this.receiver(),
+      ...this.receiver(input.bankAccountId),
       metadata: { chargeId: input.chargeId },
     }).then((body) => ({
       transactionId: String(body.transactionId ?? ""),
@@ -266,7 +270,7 @@ export class PeyClient {
       expiration: input.expirationSec,
       numRef: input.numRef,
       generateImage: false,
-      ...this.receiver(),
+      ...this.receiver(input.bankAccountId),
       metadata: { chargeId: input.chargeId },
     }).then((body) => ({
       id: String(body.id ?? ""),

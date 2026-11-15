@@ -18,12 +18,14 @@ import {
   shortDateTime,
 } from "./caja.js";
 import type { AppConfig } from "./config.js";
+import { accountLink } from "./cuenta.js";
 import { formatMxn, mexicoDayStart, parsePesosToCents } from "./money.js";
 import type { PeyBankAccount, PeyTransaction } from "./pey.js";
 import { toTenDigits } from "./phone.js";
 import {
   fold,
   Store,
+  type BankLink,
   type Charge,
   type ChargeItem,
   type ChargeMethod,
@@ -53,6 +55,20 @@ export type Completer = (input: {
 /** Así guarda el libro a quien paga cuando es la persona del chat, o cuando el cobro es abierto. */
 export const PAYER_SELF = "ti";
 export const PAYER_OPEN = "quien pague";
+
+/** La cuenta propia de esa persona, si ya está activa: ahí caen sus cobros. */
+export function ownBank(store: Store, owner: string): BankLink | null {
+  const bank = store.getProfile(owner).bank;
+  return bank && bank.status === "ACTIVE" ? bank : null;
+}
+
+/**
+ * El tope del modo de prueba para esa persona. Solo aplica mientras sus cobros
+ * van a la cuenta de pruebas de pey; con su propia cuenta activa cobra lo que quiera.
+ */
+export function testCapFor(store: Store, config: AppConfig, owner: string): number | null {
+  return ownBank(store, owner) ? null : (config.testMaxCents ?? null);
+}
 
 /** Cobros sin pagar que aguanta un mismo celular en 24 h antes de frenar (nada de cobros en masa). */
 const MAX_UNPAID_PUSHES_PER_PHONE = 3;
@@ -99,6 +115,7 @@ COBRAR (prepare_charge)
 PEY EN VIVO
 - "¿Qué me han pagado?", "mis últimos pagos", "¿cuánto me cobró pey de comisión?": pey_payments. Es lo que pey registró de verdad.
 - "¿Mi cuenta ya está activa?", "¿a dónde cae el dinero?", "¿estoy en modo de prueba?": account_status. Nunca contestes eso de memoria.
+- "Registrar mi cuenta", "quiero recibir en mi banco", "¿dónde pongo mi CLABE?", "cambiar mi cuenta": connect_bank. Manda un enlace a una página segura; la CLABE nunca se escribe en el chat. Si alguien te manda su CLABE aquí, no la uses ni la repitas: dile que por seguridad va en la página y llama a connect_bank.
 
 MEMORIA
 - Lo que la persona te pida recordar o te cuente de cómo trabaja (horarios, a quién le cobra cada cuándo, cómo prefiere cobrar): remember. Para olvidarlo: forget. Lo recordado sale en el contexto: úsalo sin que te lo repitan.
@@ -294,6 +311,21 @@ const TOOLS = [
         required: ["fact"],
         properties: {
           fact: { type: "string", description: "Palabras del dato que hay que olvidar." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "connect_bank",
+      description:
+        'Manda el enlace seguro para que la persona registre la cuenta (CLABE) donde quiere recibir sus cobros, o dice en qué estado está. Úsala para "registrar mi cuenta", "quiero recibir en mi banco", "dónde pongo mi CLABE".',
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          replace: { type: "boolean", description: "true si quiere cambiar la cuenta que ya registró." },
         },
       },
     },
@@ -528,6 +560,15 @@ function contextBlock(store: Store, owner: string, config: AppConfig, now: numbe
   const first = store.recentTurns(owner).length <= 1 && !profile.name;
   const fiado = debtsByPerson(openDebts(store, owner, "deuda"));
   const goal = goalLine(store, owner, now);
+  const testCap = testCapFor(store, config, owner);
+  const bank = profile.bank;
+  const bankLine = !bank
+    ? "Cuenta para recibir: no ha registrado la suya. Si pregunta dónde cae su dinero o quiere recibir en su banco: connect_bank."
+    : bank.status === "ACTIVE"
+      ? `Cuenta para recibir: la suya, terminada en ${bank.last4}, activa. Sus cobros caen directo en su banco.`
+      : bank.status === "ERROR"
+        ? `Cuenta para recibir: la terminada en ${bank.last4} no se pudo activar. Puede registrar otra con connect_bank.`
+        : `Cuenta para recibir: la terminada en ${bank.last4}, en activación con Banxico (hasta 5 días hábiles).`;
   const facts = (profile.facts ?? []).join(" · ");
   // Los últimos cobros, para que "el de Ana", "el último" o "ese" tengan a qué referirse.
   const lastCharges = store
@@ -550,8 +591,9 @@ function contextBlock(store: Store, owner: string, config: AppConfig, now: numbe
     `Catálogo: ${catalog || "vacío. Si cobra algo seguido, ofrece guardarlo con su precio"}.`,
     `Clientes guardados: ${contacts || "ninguno"}.`,
     `Tope de cobros de hoy: quedan ${formatMxn(left)}.`,
-    config.testMaxCents
-      ? `MODO DE PRUEBA: máximo ${formatMxn(config.testMaxCents)} por cobro. El dinero va a la cuenta de pruebas de pey, no al banco del negocio, y no se devuelve. Dilo si preguntan.`
+    bankLine,
+    testCap
+      ? `MODO DE PRUEBA: máximo ${formatMxn(testCap)} por cobro. El dinero va a la cuenta de pruebas de pey, no al banco del negocio, y no se devuelve. Dilo si preguntan.`
       : "",
     goal ? `Meta del día: ${goal}.` : "",
     fiado ? `Fiado: ${fiado}.` : "",
@@ -584,7 +626,8 @@ function payerLine(charge: Charge): string {
   return `Le llega a: ${charge.payerName} · ${phone}, en la app de su banco`;
 }
 
-const TEST_NOTE = "Modo de prueba: el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve.";
+const TEST_NOTE =
+  'Modo de prueba: el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve. Para recibir en tu banco dime "registrar mi cuenta".';
 
 /** El concepto que lleva un cobro cuando la persona no dijo ninguno. */
 export const DEFAULT_CONCEPT = "Cobro";
@@ -653,6 +696,7 @@ const FINAL_TOOLS = new Set([
   "remember",
   "forget",
   "show_help",
+  "connect_bank",
 ]);
 
 /** Lo que el agente puede preguntarle a pey en vivo. Lo conecta flows.ts. */
@@ -935,9 +979,10 @@ export function prepareCharge(
   if (every && (fixed || openAmount)) {
     return { output: fail("un cobro recurrente va por notificación al celular del cliente, no por QR fijo. Elige uno.") };
   }
-  if (openAmount && config.testMaxCents) {
+  const testCap = testCapFor(store, config, owner);
+  if (openAmount && testCap) {
     return {
-      output: `${DIRECT}En modo de prueba no hago QR de monto abierto: no podría topar lo que te paguen, y ese dinero no se devuelve. Sí te hago un QR fijo de hasta ${formatMxn(config.testMaxCents)}.`,
+      output: `${DIRECT}En modo de prueba no hago QR de monto abierto: no podría topar lo que te paguen, y ese dinero no se devuelve. Sí te hago un QR fijo de hasta ${formatMxn(testCap)}.`,
     };
   }
   // Más de un millón no se cobra por CoDi: se dice de una vez, sin pedir el monto otra vez.
@@ -966,9 +1011,9 @@ export function prepareCharge(
       output: `${DIRECT}Ese monto no lo puedo cobrar: tiene que ser en pesos, mayor a cero y de máximo $1,000,000.00. ¿De cuánto lo hago?`,
     };
   }
-  if (config.testMaxCents && amount > config.testMaxCents) {
+  if (testCap && amount > testCap) {
     return {
-      output: `${DIRECT}Esta caja está en modo de prueba: por ahora cobro máximo ${formatMxn(config.testMaxCents)} por cobro, porque el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve. Para probar dime, por ejemplo: "cobra 1 centavo de prueba".`,
+      output: `${DIRECT}Esta caja está en modo de prueba: por ahora cobro máximo ${formatMxn(testCap)} por cobro, porque el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve. Para probar dime "cobra 1 centavo de prueba". Para cobrar de verdad y recibir en tu banco, dime "registrar mi cuenta".`,
     };
   }
   const said = verify ? recentUserText(store, owner) : [];
@@ -1250,6 +1295,23 @@ function execute(
     }
     case "show_help":
       return { output: HELP };
+    case "connect_bank": {
+      const bank = store.getProfile(owner).bank;
+      if (bank && bank.status !== "ERROR" && raw.replace !== true) {
+        return {
+          output:
+            bank.status === "ACTIVE"
+              ? `Tus cobros ya caen directo en tu cuenta terminada en ${bank.last4}. Si quieres cambiarla dime "cambiar mi cuenta".`
+              : `Tu cuenta terminada en ${bank.last4} ya está registrada; Banxico la activa en hasta 5 días hábiles y yo te aviso. Si te equivocaste dime "cambiar mi cuenta".`,
+        };
+      }
+      const link = accountLink(config, owner, now);
+      if (!link) return { output: fail("el registro de cuentas no está disponible: falta la URL pública del servidor.") };
+      const url = bank && raw.replace === true ? `${link}&cambiar=1` : link;
+      return {
+        output: `Para recibir tus cobros directo en tu banco, registra tu cuenta en esta página segura. El enlace es solo tuyo y vale 30 minutos:\n${url}\nNo me mandes tu CLABE por el chat: va solo en esa página.`,
+      };
+    }
     case "set_product": {
       const name = nameOf(raw.name);
       if (!name || name.length > 40) return { output: fail("falta el nombre del producto, de hasta 40 caracteres.") };
@@ -1420,7 +1482,17 @@ async function accountText(
   services: AgentServices,
 ): Promise<string> {
   const lines: string[] = [];
-  if (config.peyBankAccountId) {
+  const own = store.getProfile(owner).bank;
+  if (own?.status === "ACTIVE") {
+    lines.push(`Tus cobros caen directo en tu cuenta terminada en ${own.last4}: activa en CoDi.`);
+  } else if (own && own.status !== "ERROR") {
+    lines.push(`Tu cuenta terminada en ${own.last4} está en activación con Banxico (hasta 5 días hábiles). Te aviso cuando quede.`);
+  } else if (own) {
+    lines.push(`Tu cuenta terminada en ${own.last4} no se pudo activar. Dime "registrar mi cuenta" para intentar con otra.`);
+  }
+  if (own?.status === "ACTIVE") {
+    // Con cuenta propia activa no hace falta hablar de la del negocio.
+  } else if (config.peyBankAccountId) {
     let account: PeyBankAccount | null = null;
     try {
       account = (await services.account?.()) ?? null;
@@ -1438,9 +1510,10 @@ async function accountText(
     const which = account?.clabeLast4 ? `la cuenta con CLABE terminada en ${account.clabeLast4}` : "la cuenta registrada en pey";
     lines.push(`Los cobros caen en ${which}: ${state}.`);
   } else lines.push("Los cobros caen en la cuenta CoDi ligada a la llave de pey del negocio.");
-  if (config.testMaxCents) {
+  const testCap = testCapFor(store, config, owner);
+  if (testCap) {
     lines.push(
-      `Estás en modo de prueba: máximo ${formatMxn(config.testMaxCents)} por cobro. Ese dinero va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve.`,
+      `Estás en modo de prueba: máximo ${formatMxn(testCap)} por cobro. Ese dinero va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve. Para recibir en tu banco dime "registrar mi cuenta".`,
     );
   }
   const left = Math.max(0, config.dailyCapCents - store.confirmedCentsSince(owner, mexicoDayStart(now)));

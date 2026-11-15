@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig, type AppConfig } from "./config.js";
+import { applyBankEvent, checkAccounts, handleAccountPage, takeNewAccounts, type AccountDeps } from "./cuenta.js";
 import { fileStore } from "./fileStore.js";
 import {
   ackInbound,
@@ -160,12 +161,27 @@ export function createZaldo(host: CoreHost): ZaldoCore {
         for (const notice of takeExpired(store, Date.now())) enqueue(notice.owner, notice.text);
         // Los cobros recurrentes que ya tocan salen solos, y se le avisa a quien cobra.
         for (const notice of await runRecurring(flows)) enqueue(notice.owner, notice.text);
+        // Cuentas recién registradas en la página, y las que Banxico ya activó.
+        for (const notice of takeNewAccounts(store)) enqueue(notice.owner, notice.text);
+        for (const notice of await checkAccounts(accounts)) enqueue(notice.owner, notice.text);
       } catch (error) {
         console.error("zaldo reloj", error instanceof Error ? error.message : error);
       }
     })();
   }, 30_000);
   timer.unref?.();
+
+  /** El número del bot sale de la sesión de WhatsApp que dejó el puente: sirve para el botón de regreso. */
+  const botNumber = (): string | null => {
+    try {
+      const creds = JSON.parse(readFileSync(join(dataDir, "zaldo-wa", "creds.json"), "utf8")) as { me?: { id?: string } };
+      const digits = String(creds.me?.id ?? "").split("@")[0]?.split(":")[0]?.replace(/\D/g, "") ?? "";
+      return digits.length >= 10 ? digits : null;
+    } catch {
+      return null;
+    }
+  };
+  const accounts: AccountDeps = { store, config, pey, now: () => Date.now(), botNumber };
 
   const bridgeOk = (request: CoreRequest) => {
     const given = request.headers["x-zaldo-token"];
@@ -283,6 +299,9 @@ export function createZaldo(host: CoreHost): ZaldoCore {
       if (key) store.release(key);
       return reply(400, "bad json");
     }
+    // pey también avisa por aquí cuando Banxico activa la cuenta de alguien.
+    const activated = applyBankEvent(store, body);
+    if (activated) enqueue(activated.owner, activated.text);
     const notice = applyPeyEvent(store, body, Date.now());
     if (notice) {
       enqueue(notice.owner, notice.text);
@@ -324,6 +343,9 @@ export function createZaldo(host: CoreHost): ZaldoCore {
           !!challenge;
         return ok ? reply(200, challenge) : reply(403, "forbidden");
       }
+    }
+    if (path === "/cuenta" && (method === "GET" || method === "POST")) {
+      return handleAccountPage(accounts, request);
     }
     if (method === "POST") {
       if (path === "/zaldo/bridge/inbound") return bridgeInbound(request);
