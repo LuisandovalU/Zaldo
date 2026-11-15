@@ -531,11 +531,6 @@ summary:focus-visible {
   margin-bottom: 10px;
 }
 
-.hero-kicker .reicon-inline svg {
-  width: 17px;
-  height: 17px;
-}
-
 /* Subrayado a mano en el titular */
 .h-mark {
   position: relative;
@@ -628,7 +623,7 @@ summary:focus-visible {
 .hero h1 {
   font-family: var(--display);
   font-size: clamp(2.25rem, 4.3vw, 3.7rem);
-  line-height: 1.03;
+  line-height: 1.07;
   font-weight: 800;
   letter-spacing: -0.04em;
   max-width: 14.5ch;
@@ -638,6 +633,39 @@ summary:focus-visible {
 }
 
 .ink-muted { color: var(--ink-muted); }
+
+.h-wa-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.16em;
+  color: #22ca62;
+  white-space: nowrap;
+  vertical-align: -0.06em;
+  margin-top: 0.04em;
+}
+
+.h-wa-brand .h-wa-icon svg {
+  width: 0.9em;
+  height: 0.9em;
+  display: block;
+  overflow: visible;
+  transform: translateY(0.02em);
+}
+
+.h-wa-brand .h-wa-icon .wa-glyph {
+  stroke: currentColor;
+  stroke-width: 10px;
+  paint-order: stroke fill;
+  stroke-linejoin: round;
+}
+
+.h-wa-word {
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 0.94em;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
 
 .hero-lead {
   font-size: 1.02rem;
@@ -1025,7 +1053,7 @@ summary:focus-visible {
   box-shadow: inset 0 0 0 0.6px rgba(255, 255, 255, 0.14);
 }
 
-/* Exact 472:1024 tall flagship iPhone screen proportions with dark doodle wallpaper */
+/* Exact 472:1024 tall flagship iPhone screen proportions with WhatsApp dark wallpaper */
 .iphone-screen {
   position: relative;
   z-index: 1;
@@ -1034,8 +1062,10 @@ summary:focus-visible {
   border-radius: 40px;
   overflow: hidden;
   background-color: var(--wa-bg);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cg fill='none' stroke='%23254268' stroke-width='1.15' stroke-linecap='round' stroke-linejoin='round' opacity='0.34'%3E%3Cpath d='M16 18h20a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H24l-6 5v-5h-2a5 5 0 0 1-5-5V23a5 5 0 0 1 5-5z'/%3E%3Ccircle cx='22' cy='28' r='1.3'/%3E%3Ccircle cx='27' cy='28' r='1.3'/%3E%3Ccircle cx='32' cy='28' r='1.3'/%3E%3Crect x='74' y='16' width='18' height='14' rx='3'/%3E%3Cpath d='M78 16v-3a5 5 0 0 1 10 0v3'/%3E%3Ccircle cx='83' cy='23' r='1.8'/%3E%3Cpath d='M132 14l-7 11h6l-2 9 8-11h-6z'/%3E%3Ccircle cx='26' cy='78' r='10'/%3E%3Cpath d='M26 73v10M23 76c0-1.5 1.3-2.5 3-2.5s3 1 3 2.5-1.3 2-3 2.5-3 1-3 2.5 1.3 2.5 3 2.5 3-1 3-2.5'/%3E%3Crect x='68' y='66' width='22' height='22' rx='3'/%3E%3Crect x='72' y='70' width='5' height='5'/%3E%3Crect x='81' y='70' width='5' height='5'/%3E%3Crect x='72' y='79' width='5' height='5'/%3E%3Cpath d='M124 68l10-4 10 4v9c0 6.5-4.3 11.2-10 13-5.7-1.8-10-6.5-10-13v-9z'/%3E%3Crect x='14' y='118' width='24' height='14' rx='2.5'/%3E%3Ccircle cx='26' cy='125' r='3'/%3E%3Cpath d='M72 118h20a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H80l-5 4v-4h-3a4 4 0 0 1-4-4v-8a4 4 0 0 1 4-4z'/%3E%3Cpath d='M130 116l2 5 5 2-5 2-2 5-2-5-5-2 5-2z'/%3E%3Ccircle cx='56' cy='46' r='2'/%3E%3Ccircle cx='112' cy='48' r='2.5'/%3E%3Ccircle cx='54' cy='104' r='2'/%3E%3Ccircle cx='112' cy='142' r='2'/%3E%3C/g%3E%3C/svg%3E");
-  background-size: 150px 150px;
+  background-image: url("assets/wa-wallpaper.jpg");
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   display: flex;
   flex-direction: column;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
@@ -2503,7 +2533,9 @@ summary:focus-visible {
 .s1-sweep,
 .s2-receipt,
 .s2-notif,
-.s3-tile,
+.s3-clutter-card,
+.s3-app,
+.s3-plus,
 .s3-halo,
 .s4-cube,
 .st3-scan {
@@ -2901,10 +2933,17 @@ summary:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.s2-chart svg {
+.s2-plot {
+  position: relative;
   width: 268px;
   height: 56px;
   margin-top: 8px;
+}
+
+.s2-plot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
   overflow: visible;
 }
 
@@ -2920,10 +2959,11 @@ summary:focus-visible {
 
 .s2-dot {
   position: absolute;
-  left: 276px;
-  top: 43px;
+  left: calc(266 / 268 * 100%);
+  top: calc(5 / 56 * 100%);
   width: 12px;
   height: 12px;
+  margin: -6px 0 0 -6px;
   border-radius: 50%;
   background: var(--wa-green);
   border: 2.5px solid #ffffff;
@@ -2931,45 +2971,188 @@ summary:focus-visible {
   transform: scale(0);
 }
 
-/* Escena 3 · sin apps: solo WhatsApp + Zaldo */
-.s3-tile {
+/* Escena 3 · apps extra y registro desaparecen; solo WhatsApp + Zaldo */
+.s3-clutter {
   position: absolute;
-  left: 213px;
-  top: 81px;
-  width: 54px;
-  height: 54px;
+  inset: 0;
+  pointer-events: none;
+}
+
+.s3-clutter-card {
+  position: absolute;
   border-radius: 15px;
   background: #ffffff;
-  border: 1px solid var(--line);
-  box-shadow: 0 8px 18px -10px rgba(10, 10, 12, 0.3);
-  color: #8a8a94;
-  display: grid;
-  place-items: center;
+  border: 1px solid var(--line-strong);
+  box-shadow:
+    0 12px 26px -14px rgba(10, 10, 12, 0.24),
+    inset 0 1px 0 #ffffff;
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   opacity: 0;
 }
 
-.s3-tile svg { width: 24px; height: 24px; }
+.s3-clutter-l {
+  left: 22px;
+  top: 72px;
+  width: 130px;
+  height: 92px;
+  z-index: 1;
+}
 
-.s3-tile i {
+.s3-clutter-r {
+  left: 328px;
+  top: 72px;
+  width: 130px;
+  height: 92px;
+  z-index: 1;
+}
+
+.s3-clutter-c {
+  left: 162px;
+  top: 56px;
+  width: 156px;
+  height: 118px;
+  z-index: 2;
+  padding: 11px 12px;
+  box-shadow:
+    0 18px 34px -16px rgba(10, 10, 12, 0.34),
+    inset 0 1px 0 #ffffff;
+}
+
+.s3-c-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.s3-clutter-c .s3-c-top {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.s3-c-ico {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--surf);
+  border: 1px solid var(--line);
+  color: var(--ink-muted);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.s3-c-ico svg { width: 14px; height: 14px; }
+
+.s3-c-ico-dark {
+  background: var(--ink);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.s3-c-pill {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--surf);
+  font-size: 8.5px;
+  font-weight: 700;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.s3-c-title {
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1.15;
+}
+
+.s3-c-title-sm {
+  font-family: var(--display);
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1.15;
+}
+
+.s3-c-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.s3-c-meta i {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--ink) 0 64%, var(--surf-2) 64% 100%);
+}
+
+.s3-c-dots {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  color: var(--ink-muted);
+  font-weight: 700;
+}
+
+.s3-c-fields {
+  display: grid;
+  gap: 4px;
+}
+
+.s3-c-fields span {
+  display: block;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--surf);
+  border: 1px solid var(--line);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--dim);
+  line-height: 1.25;
+}
+
+.s3-c-btn {
+  text-align: center;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: var(--surf-2);
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+
+.s3-glow {
   position: absolute;
-  right: -4px;
-  top: -4px;
-  width: 13px;
-  height: 13px;
+  left: 130px;
+  top: 20px;
+  width: 220px;
+  height: 170px;
   border-radius: 50%;
-  background: #8a8a94;
-  border: 2px solid var(--surf);
+  background: radial-gradient(circle, rgba(37, 211, 102, 0.18), transparent 68%);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .s3-duo {
   position: absolute;
   left: 140px;
-  top: 68px;
+  top: 62px;
   width: 200px;
-  height: 80px;
+  height: 84px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 14px;
 }
 
 .s3-app {
@@ -2979,7 +3162,28 @@ summary:focus-visible {
   display: grid;
   place-items: center;
   box-shadow: 0 16px 30px -14px rgba(10, 10, 12, 0.45);
+  opacity: 0;
 }
+
+.s3-plus {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 6px 14px -6px rgba(10, 10, 12, 0.28);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  z-index: 3;
+  opacity: 0;
+}
+
+.s3-plus svg { width: 13px; height: 13px; }
 
 .s3-wa {
   background: linear-gradient(180deg, #3bf27c 0%, #25d366 54%, #18b350 100%);
@@ -2992,20 +3196,28 @@ summary:focus-visible {
 .s3-wa svg { width: 46px; height: 46px; color: #ffffff; filter: drop-shadow(0 1.5px 2px rgba(0, 0, 0, 0.14)); }
 
 .s3-z {
-  background: var(--ink);
-  box-shadow: 0 16px 30px -14px rgba(10, 10, 12, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  background: radial-gradient(circle at 50% 34%, #26262e 0%, #101014 68%, #070709 100%);
+  box-shadow:
+    0 16px 30px -14px rgba(10, 10, 12, 0.62),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.24),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 
-.s3-z img { width: 52px; height: 52px; object-fit: contain; }
+.s3-z img {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+  filter: brightness(1.12) contrast(1.06);
+}
 
 .s3-halo {
   position: absolute;
   left: 170px;
-  top: 38px;
+  top: 34px;
   width: 140px;
   height: 140px;
   border-radius: 50%;
-  border: 1.5px solid rgba(10, 10, 12, 0.5);
+  border: 1.5px solid rgba(37, 211, 102, 0.42);
   opacity: 0;
 }
 
@@ -3013,7 +3225,7 @@ summary:focus-visible {
   position: absolute;
   left: 0;
   right: 0;
-  top: 180px;
+  top: 168px;
   margin-inline: auto;
   width: max-content;
   display: flex;
@@ -3029,7 +3241,8 @@ summary:focus-visible {
   opacity: 0;
 }
 
-.s3-label svg { width: 17px; height: 17px; color: #16a34a; }
+.s3-l-check { display: inline-flex; }
+.s3-l-check svg { width: 17px; height: 17px; color: #16a34a; }
 
 /* Escena 4 · seguridad (oscura) */
 .scene-security { color: #ffffff; }

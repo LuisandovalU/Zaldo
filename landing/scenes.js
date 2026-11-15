@@ -189,14 +189,16 @@
           </div>
           <div class="s2-chart" data-r="chart">
             <div class="s2-c-head"><span>Tu saldo de hoy</span><strong data-r="total">$1,380.00</strong></div>
-            <svg viewBox="0 0 268 56" preserveAspectRatio="none">
-              <defs><linearGradient id="s2-fill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#0a0a0c" stop-opacity="0.14"/><stop offset="1" stop-color="#0a0a0c" stop-opacity="0"/>
-              </linearGradient></defs>
-              <path class="s2-area" data-r="area" d="M2 50 C40 48 56 40 86 38 S136 34 160 26 S214 22 232 10 L266 5 L266 56 L2 56 Z" fill="url(#s2-fill)"/>
-              <path class="s2-line" data-r="line" pathLength="1" d="M2 50 C40 48 56 40 86 38 S136 34 160 26 S214 22 232 10 L266 5"/>
-            </svg>
-            <span class="s2-dot" data-r="dot"></span>
+            <div class="s2-plot">
+              <svg viewBox="0 0 268 56" preserveAspectRatio="none">
+                <defs><linearGradient id="s2-fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#0a0a0c" stop-opacity="0.14"/><stop offset="1" stop-color="#0a0a0c" stop-opacity="0"/>
+                </linearGradient></defs>
+                <path class="s2-area" data-r="area" d="M2 50 C40 48 56 40 86 38 S136 34 160 26 S214 22 232 10 L266 5 L266 56 L2 56 Z" fill="url(#s2-fill)"/>
+                <path class="s2-line" data-r="line" pathLength="1" d="M2 50 C40 48 56 40 86 38 S136 34 160 26 S214 22 232 10 L266 5"/>
+              </svg>
+              <span class="s2-dot" data-r="dot"></span>
+            </div>
           </div>`;
       },
       render(f, r) {
@@ -231,68 +233,95 @@
       },
     },
 
-    // 3 · Las apps y formularios desaparecen; solo quedan WhatsApp y Zaldo
+    // 3 · Las apps extra y registros desaparecen; solo quedan WhatsApp + Zaldo
     'zero-install': {
       html() {
-        const tiles = [
-          ['notebook', -178, -48],
-          ['card', -72, -80],
-          ['bank', 72, -80],
-          ['store', 178, -48],
-          ['user', -160, 50],
-          ['link', 160, 50],
-        ]
-          .map(([name, x, y], i) => `<span class="s3-tile" data-x="${x}" data-y="${y}" data-i="${i}">${icon(name)}<i></i></span>`)
-          .join('');
         return `
-          ${tiles}
+          <span class="s3-glow" data-r="glow"></span>
           <span class="s3-halo" data-r="halo"></span>
-          <div class="s3-duo" data-r="duo">
-            <span class="s3-app s3-wa" data-r="wa">${icon('whatsapp')}</span>
-            <span class="s3-app s3-z" data-r="z"><img src="assets/zaldo-cube.png" width="44" height="44" decoding="async" alt="" /></span>
+          <div class="s3-clutter">
+            <div class="s3-clutter-card s3-clutter-l" data-r="clL">
+              <div class="s3-c-top">
+                <span class="s3-c-ico">${icon('store')}</span>
+                <span class="s3-c-pill">App extra</span>
+              </div>
+              <div class="s3-c-title">Nueva app</div>
+              <div class="s3-c-meta"><i></i><span>48 MB</span></div>
+            </div>
+            <div class="s3-clutter-card s3-clutter-r" data-r="clR">
+              <div class="s3-c-top">
+                <span class="s3-c-ico">${icon('shield-lock')}</span>
+                <span class="s3-c-pill">Acceso</span>
+              </div>
+              <div class="s3-c-title">Otra clave</div>
+              <div class="s3-c-dots">• • • • • •</div>
+            </div>
+            <div class="s3-clutter-card s3-clutter-c" data-r="clC">
+              <div class="s3-c-top">
+                <span class="s3-c-ico s3-c-ico-dark">${icon('user')}</span>
+                <span class="s3-c-title-sm">Crear cuenta</span>
+              </div>
+              <div class="s3-c-fields">
+                <span>Correo</span>
+                <span>••••••</span>
+              </div>
+              <div class="s3-c-btn">Registrarme</div>
+            </div>
           </div>
-          <div class="s3-label" data-r="label">${icon('check-circle-filled')}<span>Solo tu WhatsApp</span></div>`;
-      },
-      setup(r, root) {
-        r.tiles = Array.from(root.querySelectorAll('.s3-tile')).map((el) => ({
-          el,
-          x: Number(el.dataset.x),
-          y: Number(el.dataset.y),
-          i: Number(el.dataset.i),
-          lastFilter: '',
-        }));
+          <div class="s3-duo">
+            <span class="s3-app s3-wa" data-r="wa">${icon('whatsapp')}</span>
+            <span class="s3-plus" data-r="plus">${icon('plus')}</span>
+            <span class="s3-app s3-z" data-r="z"><img src="assets/zaldo-cube.png" width="54" height="54" decoding="async" alt="" /></span>
+          </div>
+          <div class="s3-label" data-r="label"><span class="s3-l-check" data-r="lcheck">${icon('check-circle-filled')}</span><span>Solo tu WhatsApp</span></div>`;
       },
       render(f, r) {
-        const order = [0, 3, 4, 1, 5, 2];
-        r.tiles.forEach((t) => {
-          const k = order.indexOf(t.i);
-          const pop = S(f, k * 2);
-          const out = I(f, 30 + k * 7, 54 + k * 7, 0, 1, Easing.in);
-          const spread = 1 + out * 0.32;
-          t.el.style.opacity = Math.min(1, pop * 1.4) * (1 - out);
-          const flt = out > 0.02 && out < 0.99 ? `blur(${(Math.round(out * 10) / 2).toFixed(1)}px)` : 'none';
-          if (flt !== t.lastFilter) {
-            t.lastFilter = flt;
-            t.el.style.filter = flt;
-          }
-          const ts = (mix(0.5, 1, pop) * (1 - out * 0.45)).toFixed(3);
-          t.el.style.transform = `translate3d(${(t.x * spread).toFixed(1)}px, ${(t.y * spread + out * 10).toFixed(1)}px, 0) scale3d(${ts}, ${ts}, 1) rotate(${(out * (t.x > 0 ? 16 : -16)).toFixed(1)}deg)`;
-        });
+        const popL = S(f, 0);
+        const popR = S(f, 3);
+        const popC = S(f, 1);
+        const outL = I(f, 40, 56, 0, 1, Easing.in);
+        const outR = I(f, 42, 58, 0, 1, Easing.in);
+        const outC = I(f, 46, 62, 0, 1, Easing.in);
 
-        const join = S(f, 72);
-        const gap = mix(22, 7, join).toFixed(2);
-        const ds = mix(0.8, 1, join).toFixed(3);
-        r.duo.style.opacity = mix(0.42, 1, I(f, 60, 80));
-        r.duo.style.transform = `scale3d(${ds}, ${ds}, 1)`;
-        r.wa.style.transform = `translate3d(-${gap}px, 0, 0) rotate(${mix(-6, 0, join).toFixed(2)}deg)`;
-        r.z.style.transform = `translate3d(${gap}px, 0, 0) rotate(${mix(6, 0, join).toFixed(2)}deg)`;
-        const hp = I(f, 74, 110, 0, 1, Easing.out);
-        r.halo.style.opacity = hp > 0 ? (1 - hp) * 0.55 : 0;
-        const hs = mix(0.6, 1.7, hp).toFixed(3);
+        const sL = (mix(0.84, 1, popL) * (1 - outL * 0.28)).toFixed(3);
+        r.clL.style.opacity = Math.min(1, popL * 1.6) * (1 - outL);
+        r.clL.style.transform = `translate3d(${(-outL * 16).toFixed(2)}px, ${(mix(18, 0, popL) + outL * 16).toFixed(2)}px, 0) rotate(${(-7 - outL * 6).toFixed(2)}deg) scale3d(${sL}, ${sL}, 1)`;
+
+        const sR = (mix(0.84, 1, popR) * (1 - outR * 0.28)).toFixed(3);
+        r.clR.style.opacity = Math.min(1, popR * 1.6) * (1 - outR);
+        r.clR.style.transform = `translate3d(${(outR * 16).toFixed(2)}px, ${(mix(18, 0, popR) + outR * 16).toFixed(2)}px, 0) rotate(${(7 + outR * 6).toFixed(2)}deg) scale3d(${sR}, ${sR}, 1)`;
+
+        const sC = (mix(0.86, 1, popC) * (1 - outC * 0.24)).toFixed(3);
+        r.clC.style.opacity = Math.min(1, popC * 1.6) * (1 - outC);
+        r.clC.style.transform = `translate3d(0, ${(mix(22, 0, popC) + outC * 14).toFixed(2)}px, 0) rotate(${(-1.5 + outC * 3).toFixed(2)}deg) scale3d(${sC}, ${sC}, 1)`;
+
+        r.glow.style.opacity = I(f, 60, 88);
+
+        const wIn = S(f, 58);
+        const ws = mix(0.74, 1, wIn).toFixed(3);
+        r.wa.style.opacity = I(f, 58, 66);
+        r.wa.style.transform = `translate3d(${mix(-30, 0, wIn).toFixed(2)}px, ${mix(10, 0, wIn).toFixed(2)}px, 0) rotate(${mix(-7, 0, wIn).toFixed(2)}deg) scale3d(${ws}, ${ws}, 1)`;
+
+        const zIn = S(f, 64);
+        const zs = mix(0.74, 1, zIn).toFixed(3);
+        r.z.style.opacity = I(f, 64, 72);
+        r.z.style.transform = `translate3d(${mix(30, 0, zIn).toFixed(2)}px, ${mix(10, 0, zIn).toFixed(2)}px, 0) rotate(${mix(7, 0, zIn).toFixed(2)}deg) scale3d(${zs}, ${zs}, 1)`;
+
+        const pIn = S(f, 74);
+        const ps = pIn.toFixed(3);
+        r.plus.style.opacity = I(f, 74, 82);
+        r.plus.style.transform = `scale3d(${ps}, ${ps}, 1)`;
+
+        const hp = I(f, 72, 108, 0, 1, Easing.out);
+        r.halo.style.opacity = hp > 0 ? ((1 - hp) * 0.55).toFixed(3) : 0;
+        const hs = mix(0.65, 1.65, hp).toFixed(3);
         r.halo.style.transform = `scale3d(${hs}, ${hs}, 1)`;
-        const lp = S(f, 92);
-        r.label.style.opacity = I(f, 92, 102);
+
+        const lp = S(f, 82);
+        r.label.style.opacity = I(f, 82, 92);
         r.label.style.transform = `translate3d(0, ${mix(12, 0, lp).toFixed(2)}px, 0)`;
+        const lcs = mix(0.5, 1, S(f, 88)).toFixed(3);
+        r.lcheck.style.transform = `scale3d(${lcs}, ${lcs}, 1)`;
       },
     },
 
