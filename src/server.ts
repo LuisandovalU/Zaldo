@@ -7,6 +7,7 @@ import type { AuthService } from "./auth/service.js";
 import type { AppConfig } from "./config.js";
 import { ackInbound, applyPeyEvent, handleInbound, releaseInbound, takeExpired, type FlowDeps } from "./flows.js";
 import type { Outbound } from "./inbound.js";
+import { serveLanding } from "./landing.js";
 import { verifyPeyWebhook } from "./peyWebhook.js";
 import { parseWhatsAppPayload, verifyMetaSignature, type WhatsApp } from "./whatsapp.js";
 
@@ -20,6 +21,8 @@ export interface ServerDeps {
     authConfig: AuthConfig;
     reconcile?: ReconcileCache;
   };
+  /** Carpeta de la landing; por defecto landing/ en la raíz del repo. */
+  landingDir?: string;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -84,6 +87,8 @@ export function createApp(deps: ServerDeps) {
         send(res, 403, "forbidden");
         return;
       }
+      // Landing estática en "/" (index.html, styles.css, assets/, vendor/...).
+      if (await serveLanding(req, res, url.pathname, deps.landingDir)) return;
       const raw = await readBody(req);
       if (url.pathname === "/webhooks/whatsapp" && req.method === "POST") {
         const signature = req.headers["x-hub-signature-256"];
