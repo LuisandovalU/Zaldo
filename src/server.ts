@@ -1,4 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { ReconcileCache } from "./admin/reconcile.js";
+import { handleAdminRoutes } from "./admin/routes.js";
+import type { AuthConfig } from "./auth/config.js";
+import { handleAuthRoutes } from "./auth/routes.js";
+import type { AuthService } from "./auth/service.js";
 import type { AppConfig } from "./config.js";
 import { ackInbound, applyPeyEvent, handleInbound, releaseInbound, takeExpired, type FlowDeps } from "./flows.js";
 import type { Outbound } from "./inbound.js";
@@ -9,6 +14,12 @@ export interface ServerDeps {
   config: AppConfig;
   flows: FlowDeps;
   whatsapp: WhatsApp;
+  /** Panel administrador. Sin esto, /admin responde 404 y Zaldo sigue igual. */
+  admin?: {
+    auth: AuthService;
+    authConfig: AuthConfig;
+    reconcile?: ReconcileCache;
+  };
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -48,6 +59,19 @@ export function createApp(deps: ServerDeps) {
       if (req.method === "GET" && url.pathname === "/pago/volver") {
         send(res, 200, PAGE_BACK, "text/html; charset=utf-8");
         return;
+      }
+      // El panel va antes de leer el cuerpo: sus rutas manejan su propio form.
+      if (deps.admin && (url.pathname === "/admin" || url.pathname.startsWith("/admin"))) {
+        const adminDeps = {
+          auth: deps.admin.auth,
+          authConfig: deps.admin.authConfig,
+          store: deps.flows.store,
+          config: deps.config,
+          now: deps.flows.now,
+          reconcile: deps.admin.reconcile,
+        };
+        if (await handleAuthRoutes(adminDeps, req, res, url)) return;
+        if (await handleAdminRoutes(adminDeps, req, res, url)) return;
       }
       if (url.pathname === "/webhooks/whatsapp" && req.method === "GET") {
         const mode = url.searchParams.get("hub.mode");
@@ -143,10 +167,11 @@ export function createApp(deps: ServerDeps) {
   });
 }
 
-export function startSweeper(deps: FlowDeps, whatsapp: WhatsApp): NodeJS.Timeout {
+export function startSweeper(deps: FlowDeps, whatsapp: WhatsApp, auth?: AuthService): NodeJS.Timeout {
   return setInterval(() => {
     void (async () => {
       try {
+        auth?.sweep(deps.now());
         const notices = takeExpired(deps.store, deps.now());
         for (const notice of notices) await whatsapp.sendText(notice.owner, notice.text);
       } catch (error) {
