@@ -456,6 +456,16 @@ const NOT_A_YES = new Set([
   "puede", "pudieras", "sera", "seria", "deberia", "quiza", "quizas", "acaso", "duda", "seguro", "segura",
 ]);
 
+/** Sin al menos una de estas, no hay sí: un nombre o un concepto ("Pepito", "uñas") no manda dinero. */
+const AFFIRMS = new Set([
+  "si", "sip", "sii", "siii", "simon", "va", "vas", "vale", "dale", "andale", "orale", "sale", "ok", "okay", "okey", "oki",
+  "claro", "listo", "perfecto", "correcto", "exacto", "adelante", "confirmo", "confirma", "confirmar", "confirmado",
+  "confirmalo", "manda", "mandalo", "mandala", "mandaselo", "mandamelo", "mandasela", "mande", "envia", "envialo",
+  "enviaselo", "enviamelo", "envie", "hazlo", "llegue", "salga", "cobrale", "cobralo", "cobraselo", "cobramelo", "jalo",
+  "arre", "acepto", "aceptar", "procede", "proceda", "acuerdo", "afirmativo", "venga", "juega", "sobres", "camara",
+]);
+const AFFIRM_PHRASE = /esta bien|asi esta|asi mero|de una|por favor mand|porfa mand/;
+
 /**
  * El modelo dice que la persona aceptó la tarjeta con sus palabras ("ándale
  * pues, mándaselo"). Aquí se manda dinero, así que la caja lo revisa: nada de
@@ -464,7 +474,10 @@ const NOT_A_YES = new Set([
  */
 export function modelMayConfirm(text: string, charge: Pick<Charge, "amountCents" | "payerPhone">): boolean {
   if (!text.trim() || text.length > 160 || /[?¿]/.test(text) || NO_EMOJI.test(text)) return false;
-  if (plainWords(text).some((word) => NOT_A_YES.has(word))) return false;
+  const words = plainWords(text);
+  if (words.some((word) => NOT_A_YES.has(word))) return false;
+  // Tiene que haber un sí: que no diga que no, no basta para mandar dinero.
+  if (!words.some((word) => AFFIRMS.has(word)) && !AFFIRM_PHRASE.test(words.join(" "))) return false;
   for (const token of text.match(/\d[\d.,\s-]*\d|\d/g) ?? []) {
     const digits = token.replace(/\D/g, "");
     if (charge.payerPhone && digits.endsWith(charge.payerPhone)) continue;

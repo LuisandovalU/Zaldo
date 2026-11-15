@@ -243,6 +243,13 @@ test("el sí que entiende el modelo lo revisa la caja antes de mandar dinero", a
     "sí, al 5544445555",
     "sí 👎",
     "",
+    // Un concepto, un nombre o un dato suelto no es un sí, aunque el modelo lo crea.
+    "Pepito",
+    "uñas",
+    "es para la renta",
+    "Ana López",
+    "con tarjeta",
+    "gracias",
   ]) {
     assert.equal(modelMayConfirm(no, charge), false, no);
   }

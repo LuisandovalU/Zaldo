@@ -196,7 +196,7 @@ const TOOLS = [
     function: {
       name: "confirm_charge",
       description:
-        'Hay una tarjeta de cobro esperando y la persona la aceptó con sus palabras ("ándale, mándaselo", "sí porfa, que le llegue"). Solo si de verdad aceptó: si duda, pregunta o pide esperar, no la llames.',
+        'Hay una tarjeta de cobro esperando y la persona la aceptó con sus palabras ("ándale, mándaselo", "sí porfa, que le llegue"). Solo si de verdad aceptó: si duda, pregunta o pide esperar, no la llames. Un nombre, un concepto o un dato suelto ("Pepito", "es de uñas") NO es aceptar: es una corrección, y el cobro se arma otra vez con prepare_charge incluyendo ese dato.',
       parameters: { type: "object", additionalProperties: false, properties: {} },
     },
   },
@@ -1314,7 +1314,8 @@ export function prepareCharge(
   for (const stale of store.listCharges(owner)) {
     if (stale.status !== "awaiting_confirm") continue;
     store.updateCharge({ ...stale, status: "cancelled" });
-    if (fold(stale.payerName) !== fold(name) || (stale.payerPhone && phone && stale.payerPhone !== phone)) {
+    // Cambió a quién le llega (otro celular, o de QR a notificación): eso es otro cobro, no una corrección.
+    if ((stale.payerPhone ?? "") !== (phone ?? "")) {
       const who = stale.payerName === PAYER_OPEN || stale.payerName === PAYER_SELF ? "" : ` a ${stale.payerName}`;
       replaced = `Descarté el cobro de ${formatMxn(stale.amountCents)}${who} que no habías confirmado: solo armo uno a la vez.`;
     }
