@@ -680,7 +680,7 @@ function buttonTest(deps: FlowDeps, owner: string, clean: string, now: number): 
   }
   if (NO_BUTTONS.test(clean)) {
     deps.store.setProfile({ ...profile, choiceStyle: "poll" });
-    const text = "Va, sin botones: te pregunto con opciones que se ven en cualquier WhatsApp. Tocas una y listo.";
+    const text = "Va, sin botones: te escribo las opciones y me contestas con la que quieras.";
     remember(deps.store, owner, "assistant", text, now);
     return [{ kind: "text", to: owner, text }];
   }

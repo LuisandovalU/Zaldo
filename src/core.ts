@@ -85,7 +85,7 @@ const PAGE_BACK = `<!doctype html><meta charset="utf-8"><title>Zaldo</title><bod
  */
 type ChoiceStyle = "buttons" | "poll" | "text";
 const CHOICE_STYLE: ChoiceStyle =
-  process.env.ZALDO_CHOICE_STYLE === "buttons" || process.env.ZALDO_CHOICE_STYLE === "text" ? process.env.ZALDO_CHOICE_STYLE : "poll";
+  process.env.ZALDO_CHOICE_STYLE === "buttons" || process.env.ZALDO_CHOICE_STYLE === "poll" ? process.env.ZALDO_CHOICE_STYLE : "text";
 
 interface BridgeChoice {
   text: string;
@@ -123,7 +123,7 @@ export function asReplies(
       return [{ choice: { text: message.text, options, style, fallback } }];
     }
     if (message.kind === "choice") {
-      const fallback = `${message.text}\n\n${message.options.map((option) => option.label).join(" · ")}`;
+      const fallback = `${message.text}\n\nResponde: ${message.options.map((option) => option.label).join(" · ")}`;
       const style = message.style ?? styleFor(message.to);
       if (!canChoose || style === "text") return [fallback];
       return [{ choice: { text: message.text, options: message.options, style, fallback } }];
@@ -354,7 +354,10 @@ export function createZaldo(host: CoreHost): ZaldoCore {
           { type: "text", owner: from, messageId, text: text || (button.startsWith("o:") ? button.slice(2) : "") },
     );
     if (handled.claimed) ackInbound(store, messageId);
-    return json(200, { replies: asReplies(handled.messages, canChoose, (owner) => store.getProfile(owner).choiceStyle ?? CHOICE_STYLE) });
+    return json(200, { replies: asReplies(handled.messages, canChoose, (owner) =>
+        // Botones solo para quien ya comprobó que los ve. La encuesta no: su voto llega cifrado y no siempre se puede abrir.
+        store.getProfile(owner).choiceStyle === "buttons" ? "buttons" : CHOICE_STYLE,
+      ) });
   }
 
   async function metaWebhook(request: CoreRequest): Promise<CoreReply> {
