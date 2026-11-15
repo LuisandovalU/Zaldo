@@ -26,11 +26,11 @@ lo emite por CoDi y te avisa cuando el banco lo confirma. El dinero nunca pasa p
 
 <br>
 
-## La tesis en 20 segundos
+## El problema que resuelve
 
-En México, la estética, la tiendita, el freelancer y la cuenta entre amigos ya viven en WhatsApp. El cobro no: ahí se sigue dictando una CLABE de 18 dígitos, persiguiendo capturas de transferencia o pagando la comisión de una terminal y de una app aparte.
+En México la estética, la tiendita y el freelancer ya atienden por WhatsApp, y en el mismo chat se ponen de acuerdo los amigos para dividir la cuenta. A la hora de cobrar toca salirse: dictar los 18 dígitos de la CLABE, pedir la captura de la transferencia, o pagar la comisión de una terminal y abrir otra app.
 
-CoDi ya resuelve la parte bancaria: cobro al instante, de banco a banco. Lo que faltaba era una forma de usarlo sin salir del chat. Zaldo es esa forma: un punto de venta completo que se opera hablando, y que deposita directo en la cuenta del dueño.
+CoDi ya mueve el dinero de banco a banco al instante. Zaldo lo mete al chat: pides el cobro como se lo pedirías a alguien en la caja, y el pago cae directo en tu cuenta.
 
 <table>
 <tr>
@@ -40,7 +40,7 @@ CoDi ya resuelve la parte bancaria: cobro al instante, de banco a banco. Lo que 
 </tr>
 </table>
 
-### El recorrido, en 4 pasos
+### Cómo se usa
 
 | | Paso | Qué pasa de verdad |
 |:-:|---|---|
@@ -57,67 +57,21 @@ CoDi ya resuelve la parte bancaria: cobro al instante, de banco a banco. Lo que 
 
 El LLM entiende lo que pide la persona y propone una acción llamando a una herramienta. Ahí termina su autoridad. Montos, reglas de cumplimiento, confirmación, topes e idempotencia viven en código determinista, que coteja cada dato contra lo que la persona escribió de verdad. Confirmar y Cancelar ni siquiera pasan por el modelo.
 
-```mermaid
-flowchart TB
-    U(["Dueño del negocio<br/>texto o nota de voz"])
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/arquitectura-dark.svg">
+  <img src="docs/readme/arquitectura-light.svg" alt="Arquitectura de Zaldo: WhatsApp, el agente, la caja determinista y Pey. Confirmar y Cancelar van directo a la caja sin pasar por el modelo; el aviso «Ya cayó» regresa por webhook y polling." width="100%">
+</picture>
 
-    subgraph CANALES["Canales WhatsApp"]
-        direction LR
-        META["Meta Cloud API<br/>GET y POST /webhooks/whatsapp<br/>firma HMAC-SHA256"]
-        PUENTE["WhatsApp Bridge<br/>POST /zaldo/bridge/inbound<br/>GET /zaldo/bridge/outbox (long-poll)<br/>/vincular + /zaldo/qr.png"]
-    end
+### Un cobro, de la nota de voz al «Ya cayó»
 
-    subgraph CONVERSA["Capa conversacional"]
-        direction LR
-        AGENTE["Agente<br/>src/agent.ts + src/prompt.ts<br/>27 herramientas tipadas"]
-        LLM["OpenRouter<br/>src/openrouter.ts<br/>openai/gpt-4o-mini<br/>openai/whisper-large-v3"]
-        MEMORIA["Memoria privada<br/>src/memoria.ts<br/>Markdown por usuario"]
-    end
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/cobro-dark.svg">
+  <img src="docs/readme/cobro-light.svg" alt="Recorrido de un cobro en nueve pasos entre WhatsApp, el modelo, la caja y Pey, desde la nota de voz hasta el aviso «Ya cayó»." width="100%">
+</picture>
 
-    subgraph CAJA["La caja determinista"]
-        direction LR
-        FLUJOS["Flujos<br/>src/flows.ts<br/>confirmación, topes, idempotencia"]
-        REGLAS["Cumplimiento<br/>src/reglas.ts"]
-        MONTOS["Montos y cotejo<br/>src/montos.ts + src/dicho.ts"]
-        LIBRO["Caja y recurrentes<br/>src/caja.ts + src/recurrentes.ts"]
-    end
+En este recorrido el modelo interviene una sola vez, en el paso 2. De ahí en adelante todo es código: la caja verifica, tú confirmas con un botón que va directo a la caja, Pey emite y la caja concilia.
 
-    subgraph PAGOS["Pasarela CoDi"]
-        direction LR
-        PEY["Cliente Pey<br/>src/pey.ts + src/cuenta.ts<br/>POST /codi/pn<br/>POST /codi/qr<br/>POST /payment-link/create<br/>POST /bank-account<br/>GET /transaction/api-key"]
-        BANCO(["Cuenta bancaria del dueño<br/>depósito directo a su CLABE"])
-    end
-
-    subgraph SYNC["Sincronización y operación"]
-        direction LR
-        WEBHOOK["POST /webhooks/pey<br/>src/peyWebhook.ts<br/>Standard Webhooks"]
-        POLL["Doble polling<br/>src/core.ts<br/>2.5 s cobros recientes<br/>30 s barrido general"]
-        ADMIN["Panel /admin<br/>src/admin + src/auth"]
-    end
-
-    U --> META
-    U --> PUENTE
-    META --> AGENTE
-    PUENTE --> AGENTE
-    AGENTE <--> LLM
-    AGENTE <--> MEMORIA
-    AGENTE -- "propone con una herramienta" --> FLUJOS
-    PUENTE -. "botón Confirmar o Cancelar<br/>directo a la caja" .-> FLUJOS
-    FLUJOS --- REGLAS
-    FLUJOS --- MONTOS
-    FLUJOS --- LIBRO
-    FLUJOS -- "cobro confirmado" --> PEY
-    PEY -- "CoDi" --> BANCO
-    PEY -. "evento de pago" .-> WEBHOOK
-    POLL -- "consulta el estado" --> PEY
-    WEBHOOK --> FLUJOS
-    POLL --> FLUJOS
-    FLUJOS -- "Ya cayó" --> U
-    ADMIN -. "conciliación en vivo" .-> PEY
-
-    classDef caja stroke:#22ca62,stroke-width:2px
-    class FLUJOS,REGLAS,MONTOS,LIBRO caja
-```
+### Las cinco capas
 
 | Capa | Archivos | Responsabilidad |
 |---|---|---|
@@ -390,6 +344,7 @@ Zaldo/
 │   └── auth/             login: config, password, session, throttle, service, routes
 ├── scripts/              bundle-core, publish-core, publish-landing, hash-password, pey-test-account
 ├── landing/              sitio estático, demo 3D, assets/ y vendor/ (Three.js)
+├── docs/readme/          diagramas de este README, en claro y oscuro
 └── test/                 15 suites
 ```
 
