@@ -10,6 +10,7 @@
  * Por eso esta interfaz es chica y estable. Cambiarla obliga a tocar el
  * servidor; cambiar lo de adentro, no.
  */
+import { buttonMessage, isVariant, type RawMessage, type Variant } from "./botones.js";
 import { optionList, whatsappStyle } from "./estilo.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,6 +21,7 @@ import { fileStore } from "./fileStore.js";
 import {
   ackInbound,
   applyPeyEvent,
+  BUTTON_CONFIG,
   handleInbound,
   reconcilePending,
   releaseInbound,
@@ -104,7 +106,7 @@ interface BridgeChoice {
 }
 
 /** Lo que el puente manda por WhatsApp: texto, el QR como imagen con su pie, o una pregunta con botones. */
-type BridgeReply = string | { image: string; caption: string } | { choice: BridgeChoice };
+type BridgeReply = string | { image: string; caption: string } | { choice: BridgeChoice } | { raw: RawMessage };
 
 /** Lo que se pregunta bajo la tarjeta cuando las opciones van aparte. */
 const CARD_QUESTION = "¿Mando este cobro?";
@@ -113,7 +115,14 @@ export function asReplies(
   messages: Outbound[],
   canChoose = false,
   styleFor: (owner: string) => ChoiceStyle = () => CHOICE_STYLE,
+  /** Si el puente sabe reenviar mensajes armados aquí: con qué formato de botones se le escribe a cada quien. */
+  variantFor: ((owner: string) => Variant) | null = null,
 ): BridgeReply[] {
+  // Un mensaje con botones: armado aquí si el puente lo reenvía, o descrito para que lo arme él.
+  const tappable = (owner: string, text: string, options: { id: string; label: string }[], fallback: string, variant?: string): BridgeReply =>
+    variantFor
+      ? { raw: buttonMessage(isVariant(variant) ? variant : variantFor(owner), text, options, fallback) }
+      : { choice: { text, options, style: "buttons", fallback } };
   return messages.flatMap((message): BridgeReply[] => {
     if (message.kind === "text") return [whatsappStyle(message.text)];
     if (message.kind === "buttons") {
@@ -126,12 +135,12 @@ export function asReplies(
         { id: message.noId, label: "Cancelar" },
       ];
       // Texto y botones: la tarjeta completa como siempre, y debajo los dos botones.
-      if (style === "both") return [fallback, { choice: { text: CARD_QUESTION, options, style: "buttons", fallback: "" } }];
+      if (style === "both") return [fallback, tappable(message.to, CARD_QUESTION, options, "")];
       // En encuesta, la tarjeta va como mensaje y abajo solo la pregunta con sus dos opciones.
       if (style === "poll") {
         return [card, { choice: { text: CARD_QUESTION, options, style, fallback: "Responde *CONFIRMAR* o *CANCELAR*" } }];
       }
-      return [{ choice: { text: card, options, style, fallback } }];
+      return [tappable(message.to, card, options, fallback)];
     }
     if (message.kind === "choice") {
       const question = whatsappStyle(message.text);
@@ -140,8 +149,9 @@ export function asReplies(
       const style = message.style ?? styleFor(message.to);
       if (!canChoose || style === "text") return [fallback];
       if (style === "both") {
-        return [fallback, { choice: { text: "Toca una opción:", options: message.options, style: "buttons", fallback: "" } }];
+        return [fallback, tappable(message.to, "Toca una opción:", message.options, "", message.variant)];
       }
+      if (style === "buttons") return [tappable(message.to, question, message.options, fallback, message.variant)];
       // El título de una encuesta no admite formato: va el texto tal cual.
       return [{ choice: { text: style === "poll" ? message.text : question, options: message.options, style, fallback } }];
     }
@@ -333,6 +343,14 @@ export function createZaldo(host: CoreHost): ZaldoCore {
     );
   }
 
+  /** El formato de botones para ese chat: el que comprobó, o el último que alguien vio funcionar. */
+  const variantOf = (owner: string): Variant => {
+    const own = store.getProfile(owner).choiceVariant;
+    if (isVariant(own)) return own;
+    const shared = store.getProfile(BUTTON_CONFIG).choiceVariant;
+    return isVariant(shared) ? shared : "A";
+  };
+
   async function bridgeInbound(request: CoreRequest): Promise<CoreReply> {
     if (!bridgeOk(request)) return reply(401, "forbidden");
     const raw = await request.body();
@@ -361,6 +379,7 @@ export function createZaldo(host: CoreHost): ZaldoCore {
     }
     // El puente nuevo sabe enseñar botones y lo dice; al viejo se le sigue mandando texto.
     const canChoose = Array.isArray(body.caps) && body.caps.includes("choice");
+    const canRaw = Array.isArray(body.caps) && body.caps.includes("raw");
     // Un botón tocado: el de la tarjeta (c:/x:) va directo a la caja; el de una pregunta es su texto.
     const button = typeof body.button === "string" ? body.button.slice(0, 300) : "";
     // Tocó un botón: en su WhatsApp sí se ven. Desde aquí, ese chat recibe solo botones.
@@ -380,7 +399,7 @@ export function createZaldo(host: CoreHost): ZaldoCore {
         // Solo botones para quien ya tocó uno; solo texto para quien pidió "sin botones"; los demás, las dos cosas.
         const own = store.getProfile(owner).choiceStyle;
         return own === "buttons" ? "buttons" : own === "text" || own === "poll" ? "text" : CHOICE_STYLE;
-      }) });
+      }, canRaw ? variantOf : null) });
   }
 
   async function metaWebhook(request: CoreRequest): Promise<CoreReply> {

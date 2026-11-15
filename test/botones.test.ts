@@ -352,3 +352,33 @@ test("borrar mi cuenta: pregunta una vez y deja el chat como nuevo", async () =>
   const welcome = choiceIn(await say(deps, "Alejandro", calls(["set_profile", { name: "Alejandro" }])));
   assert.equal(welcome.text.startsWith("¡Mucho gusto, Alejandro!"), true);
 });
+
+test("probar botones: cuatro formatos, y el que la persona ve se queda para ella y para los demás", async () => {
+  const store = memoryStore();
+  const deps = flow(store, fakePey());
+  const variantOf = (owner: string) => (store.getProfile(owner).choiceVariant ?? store.getProfile("zaldo:botones").choiceVariant ?? "A") as "A" | "B" | "C" | "D";
+  const styleFor = (owner: string) => (store.getProfile(owner).choiceStyle === "buttons" ? ("buttons" as const) : ("both" as const));
+
+  const trial = await say(deps, "probar botones", calls());
+  assert.equal(trial.length, 5);
+  const sent = asReplies(trial, true, styleFor, variantOf) as ({ raw?: { content: Record<string, unknown>; options: { id: string }[] } } | string)[];
+  assert.equal(typeof sent[0], "string");
+  const kinds = sent.slice(1).map((item) => Object.keys((item as { raw: { content: Record<string, unknown> } }).raw.content).filter((key) => key !== "messageContextInfo")[0]);
+  assert.deepEqual(kinds, ["interactiveMessage", "buttonsMessage", "buttonsMessage", "listMessage"]);
+  assert.equal((sent[2] as { raw: { options: { id: string }[] } }).raw.options[0]?.id, "o:Veo la B");
+
+  // Toca "Veo la B": su chat y los que lleguen después usan ese formato.
+  await send(deps, { type: "button", buttonId: "o:Veo la B" });
+  assert.equal(store.getProfile(OWNER).choiceVariant, "B");
+  assert.equal(store.getProfile(OWNER).choiceStyle, "buttons");
+  assert.equal(variantOf("5219999999999"), "B");
+
+  const card = asReplies(await say(deps, "cobra 150", calls(["prepare_charge", { amount: 150 }])), true, styleFor, variantOf);
+  assert.equal(card.length, 1);
+  const content = (card[0] as { raw: { content: { buttonsMessage: { contentText: string; buttons: { buttonText: { displayText: string } }[] } } } }).raw.content;
+  assert.equal(content.buttonsMessage.contentText.startsWith("🧾 *Cobro por $150.00*"), true);
+  assert.deepEqual(
+    content.buttonsMessage.buttons.map((button) => button.buttonText.displayText),
+    ["Confirmar", "Cancelar"],
+  );
+});

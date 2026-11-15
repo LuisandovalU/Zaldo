@@ -16,6 +16,7 @@ import {
 import type { AccountPey } from "./cuenta.js";
 import { frequencyLabel, goalLine, nextOccurrence, settleDebts, shortDate } from "./caja.js";
 import type { AppConfig } from "./config.js";
+import { VARIANTS } from "./botones.js";
 import type { Inbound, Outbound } from "./inbound.js";
 import { formatMxn, mexicoDayStart } from "./money.js";
 import { isAllowed } from "./phone.js";
@@ -679,6 +680,9 @@ const WIPE_ASK =
   "¿Borro todo lo de este chat? Se van tu nombre, tu catálogo, tus clientes, tus apuntes y la conversación. Los cobros que ya salieron y la cuenta de banco que registraste se quedan.";
 const WIPE_YES = "Sí, borrar todo";
 
+/** Donde se guarda el formato de botones que ya se vio funcionar: no es una persona, es la configuración. */
+export const BUTTON_CONFIG = "zaldo:botones";
+
 const TRY_BUTTONS = /^(probar|prueba de|prueba|activar?|quiero|pon|ponme|usa) (los )?botones[\s.!]*$/i;
 const SEES_BUTTONS = "Sí veo los botones";
 const NO_BUTTONS = /^(sin botones|no los veo|no veo( los)? botones|quitar? (los )?botones)[\s.!]*$/i;
@@ -705,22 +709,36 @@ function buttonTest(deps: FlowDeps, owner: string, clean: string, now: number): 
     }
   }
   if (TRY_BUTTONS.test(clean)) {
-    const intro = 'Va una prueba. Si debajo de este mensaje no aparecen dos botones, escríbeme "sin botones".';
-    const ask = "¿Ves estos botones?";
-    remember(deps.store, owner, "assistant", `${intro}\n${ask}`, now);
+    // No todos los teléfonos pintan el mismo formato: van cuatro, y se queda el que la persona sí ve.
+    const intro =
+      'Te mando 4 pruebas de botones: *A*, *B*, *C* y *D*. Toca el botón de la primera que SÍ veas con botones. Si no ves ninguna, escríbeme "sin botones".';
+    remember(deps.store, owner, "assistant", intro, now);
     return [
       { kind: "text", to: owner, text: intro },
-      {
-        kind: "choice",
+      ...VARIANTS.map((variant) => ({
+        kind: "choice" as const,
         to: owner,
-        text: ask,
-        style: "buttons",
-        options: [
-          { id: `o:${SEES_BUTTONS}`, label: SEES_BUTTONS },
-          { id: "o:sin botones", label: "No los veo" },
-        ],
-      },
+        text: `Prueba ${variant}`,
+        style: "buttons" as const,
+        variant,
+        options: choices([`Veo la ${variant}`, "Esta no"]),
+      })),
     ];
+  }
+  const seen = /^veo la ([abcd])[\s.!]*$/i.exec(clean);
+  if (seen) {
+    const variant = (seen[1] ?? "A").toUpperCase();
+    deps.store.setProfile({ ...profile, choiceStyle: "buttons", choiceVariant: variant });
+    // El formato que alguien ya vio funcionar es el que se intenta primero con los demás.
+    deps.store.setProfile({ ...deps.store.getProfile(BUTTON_CONFIG), choiceVariant: variant });
+    const text = `Listo: me quedo con los botones de la prueba ${variant}. Desde ahora tus preguntas y la tarjeta de cada cobro traen botones.`;
+    remember(deps.store, owner, "assistant", text, now);
+    return [{ kind: "text", to: owner, text }];
+  }
+  if (/^esta no[\s.!]*$/i.test(clean)) {
+    const text = "Va. Toca el botón de la prueba que sí veas bien.";
+    remember(deps.store, owner, "assistant", text, now);
+    return [{ kind: "text", to: owner, text }];
   }
   const answer = clean.replace(/[\s.!]+$/, "").toLowerCase();
   if (answer === SEES_BUTTONS.toLowerCase() || answer === "si veo los botones") {

@@ -132,6 +132,8 @@ export interface Profile {
   bankCount?: number;
   /** Cómo ve las opciones en su WhatsApp: botones (si ya tocó uno), o texto si pidió no usarlos. */
   choiceStyle?: "buttons" | "poll" | "text";
+  /** Con qué formato de botones se le escribe (el que comprobó que ve). */
+  choiceVariant?: string;
   /** Ya se le explicó el modo demo al llegar. */
   onboarded?: boolean;
 }
