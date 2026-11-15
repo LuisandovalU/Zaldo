@@ -10,6 +10,7 @@
  * Por eso esta interfaz es chica y estable. Cambiarla obliga a tocar el
  * servidor; cambiar lo de adentro, no.
  */
+import { optionList, whatsappStyle } from "./estilo.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -107,9 +108,10 @@ export function asReplies(
   styleFor: (owner: string) => ChoiceStyle = () => CHOICE_STYLE,
 ): BridgeReply[] {
   return messages.flatMap((message): BridgeReply[] => {
-    if (message.kind === "text") return [message.text];
+    if (message.kind === "text") return [whatsappStyle(message.text)];
     if (message.kind === "buttons") {
-      const fallback = `${message.text}\n\nResponde CONFIRMAR o CANCELAR`;
+      const card = whatsappStyle(message.text);
+      const fallback = `${card}\n\nResponde *CONFIRMAR* o *CANCELAR*`;
       const style = styleFor(message.to);
       if (!canChoose || style === "text") return [fallback];
       const options = [
@@ -118,17 +120,20 @@ export function asReplies(
       ];
       // En encuesta, la tarjeta va como mensaje y abajo solo la pregunta con sus dos opciones.
       if (style === "poll") {
-        return [message.text, { choice: { text: CARD_QUESTION, options, style, fallback: "Responde CONFIRMAR o CANCELAR" } }];
+        return [card, { choice: { text: CARD_QUESTION, options, style, fallback: "Responde *CONFIRMAR* o *CANCELAR*" } }];
       }
-      return [{ choice: { text: message.text, options, style, fallback } }];
+      return [{ choice: { text: card, options, style, fallback } }];
     }
     if (message.kind === "choice") {
-      const fallback = `${message.text}\n\nResponde: ${message.options.map((option) => option.label).join(" · ")}`;
+      const question = whatsappStyle(message.text);
+      // Sin botones, las opciones van como lista: una por renglón, para contestar con cualquiera.
+      const fallback = `${question}\n\n${optionList(message.options.map((option) => option.label))}`;
       const style = message.style ?? styleFor(message.to);
       if (!canChoose || style === "text") return [fallback];
-      return [{ choice: { text: message.text, options: message.options, style, fallback } }];
+      // El título de una encuesta no admite formato: va el texto tal cual.
+      return [{ choice: { text: style === "poll" ? message.text : question, options: message.options, style, fallback } }];
     }
-    return [{ image: message.png.toString("base64"), caption: message.caption }];
+    return [{ image: message.png.toString("base64"), caption: whatsappStyle(message.caption) }];
   });
 }
 
@@ -282,11 +287,11 @@ export function createZaldo(host: CoreHost): ZaldoCore {
 
   async function deliver(messages: Outbound[]): Promise<void> {
     for (const message of messages) {
-      if (message.kind === "text") await whatsapp.sendText(message.to, message.text);
+      if (message.kind === "text") await whatsapp.sendText(message.to, whatsappStyle(message.text));
       else if (message.kind === "buttons") {
-        await whatsapp.sendButtons(message.to, message.text, message.yesId, message.noId);
-      } else if (message.kind === "choice") await whatsapp.sendChoice(message.to, message.text, message.options);
-      else await whatsapp.sendImage(message.to, message.png, message.caption);
+        await whatsapp.sendButtons(message.to, whatsappStyle(message.text), message.yesId, message.noId);
+      } else if (message.kind === "choice") await whatsapp.sendChoice(message.to, whatsappStyle(message.text), message.options);
+      else await whatsapp.sendImage(message.to, message.png, whatsappStyle(message.caption));
     }
   }
 
@@ -450,7 +455,7 @@ export function createZaldo(host: CoreHost): ZaldoCore {
         if (!bridgeOk(request)) return reply(401, "forbidden");
         const items = outbox.splice(0, outbox.length);
         saveOutbox();
-        return json(200, { items });
+        return json(200, { items: items.map((item) => ({ ...item, text: whatsappStyle(item.text) })) });
       }
       if (path === "/pago/listo") return reply(200, PAGE_OK, HTML);
       if (path === "/pago/volver") return reply(200, PAGE_BACK, HTML);

@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "test": "tsx --test test/zaldo.test.ts test/admin.test.ts test/landing.test.ts test/caja.test.ts test/versatil.test.ts test/cuenta.test.ts test/montos.test.ts test/reglas.test.ts test/dicho.test.ts test/puente.test.ts test/flujos.test.ts test/candados.test.ts test/botones.test.ts test/memoria.test.ts",
+    "test": "tsx --test test/zaldo.test.ts test/admin.test.ts test/landing.test.ts test/caja.test.ts test/versatil.test.ts test/cuenta.test.ts test/montos.test.ts test/reglas.test.ts test/dicho.test.ts test/puente.test.ts test/flujos.test.ts test/candados.test.ts test/botones.test.ts test/memoria.test.ts test/estilo.test.ts",
     "admin:hash": "tsx scripts/hash-password.ts",
     "zaldo:publish": "tsx scripts/publish-core.ts",
     "zaldo:status": "tsx scripts/publish-core.ts --status",

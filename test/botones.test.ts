@@ -200,7 +200,8 @@ test("por el puente: botones si esa persona ya comprobó que los ve; si no, opci
   // El puente viejo no entiende botones: recibe el texto de siempre.
   const old = asReplies(card, false, styleFor);
   assert.equal(typeof old[0], "string");
-  assert.equal(String(old[0]).endsWith("Responde CONFIRMAR o CANCELAR"), true);
+  assert.equal(String(old[0]).endsWith("Responde *CONFIRMAR* o *CANCELAR*"), true);
+  assert.equal(String(old[0]).startsWith("🧾 *Cobro por $150.00*\n> Lo paga:"), true);
   // El puente nuevo, sin haber probado botones: la tarjeta como mensaje y abajo la pregunta con dos opciones.
   const poll = asReplies(card, true, styleFor);
   assert.equal(poll.length, 2);
