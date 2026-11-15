@@ -375,7 +375,7 @@ test("probar botones: cuatro formatos, y el que la persona ve se queda para ella
 
   const card = asReplies(await say(deps, "cobra 150", calls(["prepare_charge", { amount: 150 }])), true, styleFor, variantOf);
   assert.equal(card.length, 1);
-  const content = (card[0] as { raw: { content: { buttonsMessage: { contentText: string; buttons: { buttonText: { displayText: string } }[] } } } }).raw.content;
+  const content = (card[0] as unknown as { raw: { content: { buttonsMessage: { contentText: string; buttons: { buttonText: { displayText: string } }[] } } } }).raw.content;
   assert.equal(content.buttonsMessage.contentText.startsWith("🧾 *Cobro por $150.00*"), true);
   assert.deepEqual(
     content.buttonsMessage.buttons.map((button) => button.buttonText.displayText),

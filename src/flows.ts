@@ -1127,11 +1127,12 @@ async function paymentsFromPey(pey: PeyPort, charge: Charge, now: number): Promi
  */
 export async function reconcilePending(
   deps: FlowDeps,
-  options: { max?: number; owner?: string } = {},
+  /** freshMs: solo los cobros que salieron hace menos de eso (la vuelta rápida, para avisar casi al instante). */
+  options: { max?: number; owner?: string; freshMs?: number } = {},
 ): Promise<PaidNotice[]> {
   const now = deps.now();
   // Un cobro reciente se consulta en cada vuelta; uno viejo (un QR de una hora, un QR fijo), una de cada cinco.
-  const slowTurn = !options.owner && Math.floor(now / 30_000) % 5 !== 0;
+  const slowTurn = !options.owner && !options.freshMs && Math.floor(now / 30_000) % 5 !== 0;
   const open = deps.store
     .listCharges(options.owner)
     .filter(
@@ -1140,6 +1141,7 @@ export async function reconcilePending(
         (charge.status === "expired" && charge.expiresAt !== null && now - charge.expiresAt < LATE_PAYMENT_MS),
     )
     .filter((charge) => !(slowTurn && now - charge.createdAt > OLD_CHARGE_MS))
+    .filter((charge) => !options.freshMs || (charge.status === "pending" && now - charge.createdAt <= options.freshMs))
     .slice(-(options.max ?? 10));
   const notices: PaidNotice[] = [];
   for (const charge of open) {

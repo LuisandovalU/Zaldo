@@ -246,6 +246,8 @@ export function createZaldo(host: CoreHost): ZaldoCore {
   // Avisos que el puente de WhatsApp recoge: "ya cayó" y "venció". Viven en disco para no perderse.
   const outboxFile = join(dataDir, "zaldo-outbox.json");
   const outbox: OutboxItem[] = [];
+  /** El puente, esperando avisos: se le despierta en cuanto entra uno. */
+  const waiters: (() => void)[] = [];
   try {
     if (existsSync(outboxFile)) {
       const saved = JSON.parse(readFileSync(outboxFile, "utf8")) as unknown;
@@ -266,7 +268,37 @@ export function createZaldo(host: CoreHost): ZaldoCore {
     if (!to || !text) return;
     outbox.push({ id: randomUUID(), to, text });
     saveOutbox();
+    // Si el puente está esperando avisos, se le entrega en este instante.
+    for (const wake of waiters.splice(0, waiters.length)) wake();
   };
+
+  /**
+   * La vuelta rápida: un cobro recién mandado se le pregunta a pey cada pocos
+   * segundos, para que el "ya cayó" llegue casi al mismo tiempo que el pago.
+   * Los primeros 3 minutos, en cada vuelta; hasta 15 minutos, una de cada cuatro.
+   */
+  let fastBusy = false;
+  let fastTurn = 0;
+  const fast = setInterval(() => {
+    if (fastBusy) return;
+    fastBusy = true;
+    fastTurn += 1;
+    void (async () => {
+      try {
+        const freshMs = fastTurn % 4 === 0 ? 15 * 60_000 : 3 * 60_000;
+        for (const paid of await reconcilePending(flows, { freshMs, max: 6 })) {
+          enqueue(paid.owner, paid.text);
+          const current = store.getCharge(paid.chargeId);
+          if (current) store.updateCharge({ ...current, paidNoticeSent: true });
+        }
+      } catch (error) {
+        console.error("zaldo reloj rápido", error instanceof Error ? error.message : error);
+      } finally {
+        fastBusy = false;
+      }
+    })();
+  }, 2_500);
+  fast.unref?.();
 
   const timer = setInterval(() => {
     void (async () => {
@@ -490,6 +522,18 @@ export function createZaldo(host: CoreHost): ZaldoCore {
       }
       if (path === "/zaldo/bridge/outbox") {
         if (!bridgeOk(request)) return reply(401, "forbidden");
+        // El puente pregunta cada pocos segundos. Si no hay avisos, se le hace esperar un poco:
+        // así el que llegue en ese rato sale en el momento, no hasta la siguiente pregunta.
+        if (!outbox.length) {
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(resolve, 3_500);
+            timeout.unref?.();
+            waiters.push(() => {
+              clearTimeout(timeout);
+              resolve();
+            });
+          });
+        }
         const items = outbox.splice(0, outbox.length);
         saveOutbox();
         return json(200, { items: items.map((item) => ({ ...item, text: whatsappStyle(item.text) })) });
@@ -521,6 +565,10 @@ export function createZaldo(host: CoreHost): ZaldoCore {
     build: CORE_BUILD,
     dataDir,
     handle,
-    stop: () => clearInterval(timer),
+    stop: () => {
+      clearInterval(timer);
+      clearInterval(fast);
+      for (const wake of waiters.splice(0, waiters.length)) wake();
+    },
   };
 }
