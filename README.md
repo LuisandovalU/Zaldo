@@ -46,6 +46,21 @@ En Meta, el token de verificación es el mismo `WHATSAPP_VERIFY_TOKEN`. En el po
 
 La API key tiene que tener una cuenta CoDi ligada y activa (portal de Pey: Finanzas para registrar la CLABE, Desarrolladores para ligarla a la llave). Sin eso, Pey responde `INVALID_STATE: API key does not have CoDi enabled` y Zaldo se lo explica a quien cobra. Mientras Banxico activa la cuenta propia (unos 5 días hábiles), la documentación de Pey da una CLABE de pruebas que se activa al momento. Cobra $0.01.
 
+## Publicar sin push
+
+En producción Zaldo vive dentro de otro servidor (zaldo.ih0st.app). Ni la landing ni el bot necesitan un deploy de ese servidor:
+
+```bash
+npm run zaldo:publish     # corre los tests, empaqueta src/core.ts y cambia el bot en caliente
+npm run zaldo:status      # qué versión corre (también se ve en /health)
+npm run zaldo:rollback    # vuelve a la versión anterior
+npm run landing:publish   # sube landing/ (landing:watch la sube cada que guardas)
+```
+
+`zaldo:publish` arma un solo archivo con todo el bot y lo sube con `ZALDO_CORE_TOKEN`. El servidor comprueba su sha256, lo carga, y solo si arranca reemplaza al que corría: las peticiones a medias terminan con la versión vieja y el libro (catálogo, cobros, fiado) sigue igual. Guarda las últimas 5 versiones.
+
+Ese token permite ejecutar código en el servidor. Va en `.env`, nunca en git, y solo lo tiene quien despliega.
+
 ## Demo
 
 Desde WhatsApp:
