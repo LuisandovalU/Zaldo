@@ -402,6 +402,33 @@ export class Store {
   recentTurns(owner: string): Turn[] {
     return this.data.turns[owner] ?? [];
   }
+
+  /**
+   * Deja el chat de esa persona como nuevo: sin conversación, catálogo,
+   * clientes, apuntes ni notas. Se conservan los cobros que ya salieron y
+   * siguen por pagarse (si caen, hay que avisar) y la cuenta de banco que
+   * registró, que vive en pey y no se borra desde aquí.
+   */
+  resetOwner(owner: string): void {
+    const profile = this.getProfile(owner);
+    this.data.charges = this.data.charges.filter((item) => item.owner !== owner || item.status === "pending");
+    this.data.notes = this.data.notes.filter((item) => item.owner !== owner);
+    this.data.contacts = this.data.contacts.filter((item) => item.owner !== owner);
+    this.data.products = this.data.products.filter((item) => item.owner !== owner);
+    this.data.recurrings = this.data.recurrings.filter((item) => item.owner !== owner);
+    delete this.data.turns[owner];
+    this.data.profiles = this.data.profiles.filter((item) => item.owner !== owner);
+    if (profile.bank || profile.bankCount) {
+      this.data.profiles.push({
+        owner,
+        name: null,
+        phone: null,
+        ...(profile.bank ? { bank: profile.bank } : {}),
+        ...(profile.bankCount ? { bankCount: profile.bankCount } : {}),
+      });
+    }
+    this.save();
+  }
 }
 
 /** Sin acentos, sin mayúsculas y con un solo espacio: para comparar nombres. */

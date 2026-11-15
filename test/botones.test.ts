@@ -322,3 +322,33 @@ test("quien llega dice su nombre y se le explica el modo demo, con dos caminos",
   const plain = await say(realDeps, "Alejandro", calls(["set_profile", { name: "Alejandro" }]));
   assert.equal(plain.some((message) => message.kind === "choice"), false);
 });
+
+test("borrar mi cuenta: pregunta una vez y deja el chat como nuevo", async () => {
+  const store = memoryStore();
+  const deps = flow(store, fakePey());
+  deps.config = { ...deps.config, peyBankAccountId: "acct_pruebas", testMaxCents: 100 };
+  await say(deps, "Alejandro", calls(["set_profile", { name: "Alejandro" }]));
+  store.setProduct({ owner: OWNER, name: "corte", priceCents: 15_000 });
+  assert.equal(store.getProfile(OWNER).name, "Alejandro");
+
+  // Un "sí, borrar todo" suelto, sin que se haya preguntado, no borra nada.
+  await say(deps, "Sí, borrar todo", async () => ({ content: "¿Qué quieres borrar?", toolCalls: [] }));
+  assert.equal(store.getProfile(OWNER).name, "Alejandro");
+
+  const asked = choiceIn(await say(deps, "borrar mi cuenta", calls()));
+  assert.equal(asked.text.startsWith("¿Borro todo lo de este chat?"), true);
+  assert.deepEqual(
+    asked.options.map((option) => option.label),
+    ["Sí, borrar todo", "No, dejarlo así"],
+  );
+  const done = await send(deps, { type: "button", buttonId: asked.options[0]!.id });
+  assert.equal(done[0]?.kind, "text");
+  assert.equal(store.getProfile(OWNER).name, null);
+  assert.equal(store.getProfile(OWNER).onboarded, undefined);
+  assert.equal(store.listProducts(OWNER).length, 0);
+  assert.equal(store.recentTurns(OWNER).length, 0);
+
+  // Y vuelve a recibir la bienvenida, como cualquiera que llega.
+  const welcome = choiceIn(await say(deps, "Alejandro", calls(["set_profile", { name: "Alejandro" }])));
+  assert.equal(welcome.text.startsWith("¡Mucho gusto, Alejandro!"), true);
+});

@@ -674,6 +674,11 @@ function demoWelcome(deps: FlowDeps, owner: string, nameBefore: string | null, n
   return [{ kind: "choice", to: owner, text, options: choices([REGISTER, KEEP_DEMO_LABEL]) }];
 }
 
+const WIPE = /^(borra|borrar|elimina|eliminar|reinicia|reiniciar|resetea|resetear) (mi cuenta|mis datos|todo|este chat)[\s.!]*$|^empezar de cero[\s.!]*$/i;
+const WIPE_ASK =
+  "¿Borro todo lo de este chat? Se van tu nombre, tu catálogo, tus clientes, tus apuntes y la conversación. Los cobros que ya salieron y la cuenta de banco que registraste se quedan.";
+const WIPE_YES = "Sí, borrar todo";
+
 const TRY_BUTTONS = /^(probar|prueba de|prueba|activar?|quiero|pon|ponme|usa) (los )?botones[\s.!]*$/i;
 const SEES_BUTTONS = "Sí veo los botones";
 const NO_BUTTONS = /^(sin botones|no los veo|no veo( los)? botones|quitar? (los )?botones)[\s.!]*$/i;
@@ -686,6 +691,19 @@ const NO_BUTTONS = /^(sin botones|no los veo|no veo( los)? botones|quitar? (los 
  */
 function buttonTest(deps: FlowDeps, owner: string, clean: string, now: number): Outbound[] | null {
   const profile = deps.store.getProfile(owner);
+  // "Borrar mi cuenta": se pregunta una vez, con botones, y solo entonces se borra.
+  if (WIPE.test(clean)) {
+    remember(deps.store, owner, "assistant", WIPE_ASK, now);
+    return [{ kind: "choice", to: owner, text: WIPE_ASK, options: choices([WIPE_YES, "No, dejarlo así"]) }];
+  }
+  if (clean.replace(/[\s.!]+$/, "").toLowerCase() === WIPE_YES.toLowerCase()) {
+    const turns = deps.store.recentTurns(owner);
+    const asked = turns.length >= 2 && turns[turns.length - 2]?.role === "assistant" && turns[turns.length - 2]?.content === WIPE_ASK;
+    if (asked) {
+      deps.store.resetOwner(owner);
+      return [{ kind: "text", to: owner, text: 'Listo: borré todo lo de este chat. Escríbeme "hola" y empezamos de cero.' }];
+    }
+  }
   if (TRY_BUTTONS.test(clean)) {
     const intro = 'Va una prueba. Si debajo de este mensaje no aparecen dos botones, escríbeme "sin botones".';
     const ask = "¿Ves estos botones?";
