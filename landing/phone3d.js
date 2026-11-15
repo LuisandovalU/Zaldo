@@ -253,7 +253,10 @@ function buildPhone() {
   return phone;
 }
 
-function init() {
+// Cede el hilo entre etapas pesadas del montaje: deja pintar y atender el scroll
+const breathe = () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+
+async function init() {
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const glareEl = screenEl.querySelector('.screen-glare');
   const lensEl = screenEl.querySelector('.island-cam');
@@ -264,6 +267,7 @@ function init() {
   renderer.toneMappingExposure = 1.15;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = false;
+  await breathe();
 
   const scene = new THREE.Scene();
 
@@ -279,6 +283,7 @@ function init() {
     }
   });
   pmrem.dispose();
+  await breathe();
 
   const key = new THREE.DirectionalLight(0xffffff, 2.4);
   key.position.set(-340, 520, 760);
@@ -320,8 +325,12 @@ function init() {
   cssRenderer.domElement.classList.add('phone3d-css');
   viewport.appendChild(cssRenderer.domElement);
 
+  wrap.classList.remove('is-2d');
   wrap.classList.add('is-3d');
-  if (stageEl) stageEl.classList.add('has-3d');
+  if (stageEl) {
+    stageEl.classList.remove('has-2d');
+    stageEl.classList.add('has-3d');
+  }
   wrap.appendChild(viewport);
 
   const screenObj = new CSS3DObject(screenEl);
@@ -343,11 +352,26 @@ function init() {
     vpDocCenterY = r.top + window.scrollY + r.height * 0.5;
   }
 
+  // En celular/tableta (hero en columna) el teléfono se ajusta también al alto visible,
+  // para que quepa entero bajo la barra y la tira de ejemplos. En escritorio no cambia.
+  const stackedMq = window.matchMedia('(max-width: 960px)');
+  function fitFor(w) {
+    let f = Math.min(MAX_SCALE, (w - 46) / W);
+    if (stackedMq.matches) {
+      const roomH = (document.documentElement.clientHeight || winH) - 132;
+      f = Math.min(f, Math.max(0.8, roomH / (H + 20)));
+    }
+    return f;
+  }
+
   let fit = 1;
   function resize() {
     const w = viewport.clientWidth;
+    if (!w) return;
+    const nextFit = fitFor(w);
+    viewport.style.height = stackedMq.matches ? `${Math.round(VIEW_H - H + H * nextFit)}px` : '';
     const h = viewport.clientHeight || VIEW_H;
-    if (!w || (w === viewW && h === camera.userData.h)) return;
+    if (w === viewW && h === camera.userData.h) return;
     viewW = w;
     camera.userData.h = h;
     camera.aspect = w / h;
@@ -361,7 +385,7 @@ function init() {
     renderer.setSize(w, h, false);
     cssRenderer.setSize(w, h);
     // Más grande en escritorio; en pantallas angostas se ajusta al ancho sin tocar el desvanecido lateral
-    fit = Math.min(MAX_SCALE, (w - 46) / W);
+    fit = nextFit;
     rigGroup.scale.setScalar(fit);
     floor.position.y = PHONE_Y - (H / 2) * fit - FLOOR_GAP;
     measureViewport();
@@ -385,6 +409,7 @@ function init() {
   let introStart = 0;
   let kickDir = 1;
   let needsRender = true;
+  let live = false;
   let visible = true;
   let raf = 0;
   let last = 0;
@@ -524,7 +549,7 @@ function init() {
   }
 
   function start() {
-    if (!raf && visible && !document.hidden) {
+    if (!raf && live && visible && !document.hidden) {
       last = 0;
       raf = requestAnimationFrame(frame);
     }
@@ -558,32 +583,59 @@ function init() {
   resize();
   measureViewport();
   readScroll();
-  start();
+
+  // Los shaders se compilan en paralelo (sin congelar la página) y el teléfono aparece
+  // ya con su primer cuadro listo; ahí arranca el giro de entrada y se avisa al demo.
+  let revealed = false;
+  const reveal = () => {
+    if (revealed) return;
+    revealed = true;
+    live = true;
+    introStart = 0;
+    start();
+    requestAnimationFrame(() => {
+      viewport.classList.add('is-ready');
+      window.dispatchEvent(new CustomEvent('zaldo:phone-ready'));
+    });
+  };
+  if (typeof renderer.compileAsync === 'function') {
+    renderer.compileAsync(scene, camera).then(reveal, reveal);
+    setTimeout(reveal, 2500);
+  } else {
+    reveal();
+  }
 
   window.ZaldoPhone3D = { rig, renderer, phone, camera };
 }
 
-function webglAvailable() {
-  try {
-    const c = document.createElement('canvas');
-    return Boolean(window.WebGLRenderingContext && (c.getContext('webgl2') || c.getContext('webgl')));
-  } catch (err) {
-    return false;
-  }
-}
-
-if (wrap && screenEl && webglAvailable()) {
-  try {
-    init();
-  } catch (err) {
+// No se crea un contexto WebGL de prueba (costaba ~medio segundo): si el renderer no
+// puede crearse, lanza y se conserva el teléfono 2D.
+function boot() {
+  init().catch((err) => {
     // Sin WebGL utilizable: se queda el teléfono CSS original, intacto
     wrap.classList.remove('is-3d');
-    if (stageEl) stageEl.classList.remove('has-3d');
+    wrap.classList.add('is-2d');
+    if (stageEl) {
+      stageEl.classList.remove('has-3d');
+      stageEl.classList.add('has-2d');
+    }
     const bezel = wrap.querySelector('.iphone-bezel');
     const viewport = wrap.querySelector('.phone3d-viewport');
     if (bezel && screenEl.parentElement !== bezel) bezel.appendChild(screenEl);
     if (viewport) viewport.remove();
     screenEl.removeAttribute('style');
+    window.dispatchEvent(new CustomEvent('zaldo:phone-ready'));
     console.warn('Zaldo 3D: se usa el teléfono 2D de respaldo.', err);
+  });
+}
+
+if (wrap && screenEl) {
+  if (window.WebGLRenderingContext) {
+    // Deja pintar primero el texto del hero; el 3D se monta en el siguiente cuadro
+    requestAnimationFrame(() => setTimeout(boot, 0));
+  } else {
+    wrap.classList.add('is-2d');
+    if (stageEl) stageEl.classList.add('has-2d');
+    window.dispatchEvent(new CustomEvent('zaldo:phone-ready'));
   }
 }

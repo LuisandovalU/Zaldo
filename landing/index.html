@@ -10,7 +10,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" type="image/png" href="assets/zaldo-cube.png" />
   <link rel="preload" as="image" href="assets/zaldo-cube.png" />
-  <link rel="stylesheet" href="styles.css?v=cube-hover" />
+  <link rel="stylesheet" href="styles.css?v=mobile-live" />
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+  <link rel="modulepreload" href="vendor/three.module.min.js" />
+  <link rel="modulepreload" href="vendor/CSS3DRenderer.js" />
+  <link rel="modulepreload" href="vendor/RoomEnvironment.js" />
+  <link rel="modulepreload" href="phone3d.js?v=mobile-live" />
 </head>
 <body id="top">
   <!-- Full-Width Apple Obsidian Glass Navigation Bar -->
@@ -93,7 +98,7 @@
               <button type="button" class="picker-card picker-card-wide active" data-preset="clabe" role="radio" aria-checked="true">
                 <span class="picker-icon reicon-box" data-reicon="bank"></span>
                 <span class="picker-text">
-                  <strong>Inicio: Conecta tu CLABE una sola vez</strong>
+                  <strong><i class="pk-long">Inicio: Conecta tu CLABE una sola vez</i><i class="pk-short">CLABE</i></strong>
                   <span>«Quiero conectar mi CLABE 012180... a nombre de Ana»</span>
                 </span>
                 <span class="picker-step-badge">1 solo paso</span>
@@ -102,7 +107,7 @@
               <button type="button" class="picker-card" data-preset="push" role="radio" aria-checked="false">
                 <span class="picker-icon reicon-box" data-reicon="mic"></span>
                 <span class="picker-text">
-                  <strong>Cobrar por nota de voz</strong>
+                  <strong><i class="pk-long">Cobrar por nota de voz</i><i class="pk-short">Voz</i></strong>
                   <span>«Cóbrale $350 a Sofi»</span>
                 </span>
               </button>
@@ -110,7 +115,7 @@
               <button type="button" class="picker-card" data-preset="qr" role="radio" aria-checked="false">
                 <span class="picker-icon reicon-box" data-reicon="qr"></span>
                 <span class="picker-text">
-                  <strong>Cobrar con QR en persona</strong>
+                  <strong><i class="pk-long">Cobrar con QR en persona</i><i class="pk-short">QR</i></strong>
                   <span>«Mándame un QR de $180»</span>
                 </span>
               </button>
@@ -118,7 +123,7 @@
               <button type="button" class="picker-card" data-preset="link" role="radio" aria-checked="false">
                 <span class="picker-icon reicon-box" data-reicon="link"></span>
                 <span class="picker-text">
-                  <strong>Mandar link de pago</strong>
+                  <strong><i class="pk-long">Mandar link de pago</i><i class="pk-short">Link</i></strong>
                   <span>«Link de $1,200 por el diseño»</span>
                 </span>
               </button>
@@ -126,7 +131,7 @@
               <button type="button" class="picker-card" data-preset="saldo" role="radio" aria-checked="false">
                 <span class="picker-icon reicon-box" data-reicon="wallet-money"></span>
                 <span class="picker-text">
-                  <strong>Ver cómo va tu día</strong>
+                  <strong><i class="pk-long">Ver cómo va tu día</i><i class="pk-short">Saldo</i></strong>
                   <span>«¿Cómo va mi zaldo hoy?»</span>
                 </span>
               </button>
@@ -196,7 +201,7 @@
                   <div class="wa-composer">
                     <span class="wa-composer-icon wa-plus reicon-inline" data-reicon="plus" aria-hidden="true"></span>
                     <button type="button" class="wa-input-fake" id="wa-input-hint" title="Repetir este ejemplo">
-                      <span class="wa-input-text" id="wa-input-text">Toca Confirmar arriba…</span><span class="wa-caret" aria-hidden="true"></span>
+                      <span class="wa-input-text" id="wa-input-text">Mensaje</span><span class="wa-caret" aria-hidden="true"></span>
                     </button>
                     <span class="wa-composer-icon wa-cam-icon reicon-inline" data-reicon="camera" aria-hidden="true"></span>
                     <button type="button" class="wa-mic-btn" id="wa-replay-btn" aria-label="Repetir ejemplo actual" title="Repetir ejemplo">
@@ -524,9 +529,8 @@
   </footer>
 
   <script src="reicons.js"></script>
-  <script src="scenes.js?v=smooth-perf"></script>
-  <script src="app.js?v=mark-draw"></script>
-  <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
-  <script type="module" src="phone3d.js?v=smooth-perf"></script>
+  <script src="scenes.js?v=mobile-live"></script>
+  <script src="app.js?v=mobile-live"></script>
+  <script type="module" src="phone3d.js?v=mobile-live"></script>
 </body>
 </html>

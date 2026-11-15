@@ -724,7 +724,7 @@
       raf = 0;
       const dt = Math.min(4, last ? (now - last) / (1000 / FPS) : 1);
       last = now;
-      const sy = window.scrollY || 0;
+      const sy = lastY;
       const scrolling = now - scrolledAt < 260;
       const target = scrollTarget(cachedVh, sy);
       const settled = target >= TOTAL * 0.3;
@@ -889,7 +889,7 @@
     const dt = Math.min(4, last ? (now - last) / (1000 / FPS) : 1);
     last = now;
     const vh = cachedVh;
-    const sy = window.scrollY || 0;
+    const sy = lastScrollY;
     const isActivelyScrolling = now - lastScrollAt < 260;
 
     players.forEach((p) => {
