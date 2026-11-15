@@ -1,3 +1,6 @@
+import { ReconcileCache } from "./admin/reconcile.js";
+import { authEnabled, loadAuthConfig } from "./auth/config.js";
+import { AuthService } from "./auth/service.js";
 import { loadConfig } from "./config.js";
 import { loadEnvFile } from "./envFile.js";
 import { fileStore } from "./fileStore.js";
@@ -26,10 +29,22 @@ const flows: FlowDeps = {
   },
 };
 
-const app = createApp({ config, flows, whatsapp });
-const sweeper = startSweeper(flows, whatsapp);
+const authConfig = loadAuthConfig();
+const auth = new AuthService(authConfig);
+// El panel lee las transacciones reales de Pey con la misma API key.
+const admin = authEnabled(authConfig)
+  ? { auth, authConfig, reconcile: new ReconcileCache(pey, store) }
+  : undefined;
+
+const app = createApp({ config, flows, whatsapp, admin });
+const sweeper = startSweeper(flows, whatsapp, admin ? auth : undefined);
 app.listen(config.port, () => {
   console.log(`Zaldo escuchando en :${config.port}`);
+  if (admin) {
+    console.log(`Panel administrador en /admin (${authConfig.users.length} admin(s))`);
+  } else {
+    console.log("Panel apagado: falta ADMIN_USERS o ADMIN_SESSION_SECRET. Usa npm run admin:hash.");
+  }
 });
 
 function shutdown(): void {
