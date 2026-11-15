@@ -22,6 +22,8 @@ export interface LinkInput {
   chargeId: string;
   successUrl: string;
   backUrl: string;
+  /** Deja que quien paga agregue propina. */
+  hasTip?: boolean;
 }
 
 export interface PushResult {
@@ -200,6 +202,8 @@ export interface PeyPaymentLink {
   status: PaymentLinkStatus;
   /** Milisegundos del primer pago, si ya hay uno. */
   datePaid: number | null;
+  /** La propina de ese pago, en centavos. */
+  tipCents: number;
 }
 
 export interface PeyClientOptions {
@@ -275,6 +279,7 @@ export class PeyClient {
       amount: centsToPesos(input.amountCents),
       successUrl: input.successUrl,
       backUrl: input.backUrl,
+      ...(input.hasTip ? { hasTip: true } : {}),
       clientReferenceId: input.chargeId,
       metadata: { chargeId: input.chargeId },
     }).then((body) => ({
@@ -324,6 +329,7 @@ export class PeyClient {
       id: optionalString(body.id) ?? id,
       status: status === "paid" || status === "processing" || status === "partial" ? status : "pending",
       datePaid: first ? epochSeconds(first.datePaid) : null,
+      tipCents: first ? (parseBreakdown(first.amountBreakdown)?.tipCents ?? 0) : 0,
     };
   }
 

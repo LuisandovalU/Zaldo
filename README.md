@@ -6,14 +6,18 @@ Repo del equipo: https://github.com/LuisandovalU/Zaldo
 
 ## Qué hace
 
-- **Catálogo:** «agrega corte a 150», «sube el gel a 250», «qué vendo».
-- **Venta por ticket:** «cobra 2 acrílicas y un gel». Los precios y el total salen del catálogo, no del modelo.
-- **Tres formas de cobrar con CoDi:** QR para el cliente que está enfrente, notificación al celular del cliente, o link de pago (CoDi o tarjeta).
-- **Tarjeta con Confirmar y Cancelar** antes de crear cualquier cobro, con el desglose y a quién le llega.
-- **«Ya cayó»** cuando Pey confirma el pago: por webhook y, si el webhook no llega, consultando a Pey cada 30 segundos.
-- **Corte de caja** de hoy, la semana o el mes: ventas CoDi, ticket promedio, lo más vendido, efectivo, gastos, lo que queda y la meta del día.
+- **Cobrar con solo el monto:** «cobra 150». No hace falta vender un producto ni dar un concepto.
+- **Tres formas de cobrar con CoDi:** QR para quien está enfrente, notificación al celular del cliente («cóbrale 200 a Ana 5512345678») o link de pago con CoDi o tarjeta, con propina opcional.
+- **Cobros recurrentes:** «cóbrale 500 de renta a Ana cada mes». Se confirma una vez; después Zaldo manda la notificación solo cada semana, quincena o mes, y avisa. A los tres cobros seguidos sin pagar se pausa solo.
+- **QR fijo de mostrador:** no vence y recibe muchos pagos; cada uno cae como una venta aparte. También de monto abierto: quien paga escribe la cantidad.
+- **Tarjeta con Confirmar y Cancelar** antes de crear cualquier cobro, con el desglose y a quién le llega. Un cobro corregido («mejor 200») reemplaza al anterior.
+- **«Ya cayó»** cuando pey confirma el pago: por webhook y, si el webhook no llega, consultando a pey cada 30 segundos. «¿Ya pagó Ana?» le pregunta a pey en ese momento.
+- **Pey en vivo:** «mis últimos pagos» (con comisión y propina, como los registró pey) y «¿mi cuenta ya está activa?».
+- **Catálogo y ticket:** «agrega corte a 150», «cobra 2 cortes y un tinte». Los precios y el total salen del catálogo, no del modelo.
+- **Corte de caja** de hoy, ayer, la semana o el mes: ventas CoDi, ticket promedio, lo más vendido, efectivo, propinas, gastos, lo que queda y la meta del día.
 - **Fiado:** «Ana me quedó a deber 300». Cuando Ana paga por CoDi, su fiado se abona solo.
-- Clientes guardados, repetir un cobro, ventas en efectivo y gastos del negocio, que se apuntan sin mover dinero.
+- **Memoria:** recuerda el nombre, el negocio, los clientes, los últimos cobros y lo que se le pida («recuerda que cierro a las 8»).
+- Nota de voz o texto. «Ayuda» muestra todo lo que sabe hacer.
 
 ## Candados
 
@@ -23,6 +27,8 @@ El modelo conversa; la caja decide. Estas reglas viven en código, no en el prom
 - Las cifras de cada respuesta salen del libro tal cual: el modelo no las vuelve a escribir.
 - Si el modelo dice «apuntado» sin haber guardado nada, se le obliga a hacerlo o la persona recibe un «no lo pude apuntar».
 - CONFIRMAR y CANCELAR los resuelve la caja, sin pasar por el modelo.
+- Si el modelo rechaza un cobro por su cuenta («el mínimo es 1 peso»), se le obliga a consultar a la caja: no hay monto mínimo.
+- Una persona, un mensaje a la vez; si el modelo se cae, la persona recibe respuesta igual; veinte mensajes por minuto por persona.
 - Tope diario de cobros, y no más de 3 notificaciones sin pagar al mismo celular en 24 horas.
 - El cobro va al celular del dueño solo si él lo pide («cóbrame»). Otro celular, si hay lista blanca, no crea cobros.
 

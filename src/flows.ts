@@ -1,8 +1,17 @@
-import { randomInt } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import QRCode from "qrcode";
-import { chargeCard, PAYER_OPEN, PAYER_SELF, prettyPhone, runAgent, type Completer } from "./agent.js";
+import {
+  chargeCard,
+  DEFAULT_CONCEPT,
+  PAYER_OPEN,
+  PAYER_SELF,
+  prettyPhone,
+  runAgent,
+  type AgentServices,
+  type Completer,
+} from "./agent.js";
+import { frequencyLabel, goalLine, nextOccurrence, settleDebts, shortDate } from "./caja.js";
 import type { AppConfig } from "./config.js";
-import { goalLine, settleDebts } from "./caja.js";
 import type { Inbound, Outbound } from "./inbound.js";
 import { formatMxn, mexicoDayStart } from "./money.js";
 import { isAllowed } from "./phone.js";
@@ -10,6 +19,7 @@ import {
   PeyError,
   type LinkInput,
   type LinkResult,
+  type PeyBankAccount,
   type PeyPaymentLink,
   type PeyTransaction,
   type PeyTransactionPage,
@@ -18,7 +28,7 @@ import {
   type QrInput,
   type QrResult,
 } from "./pey.js";
-import { Store, type Charge, type ChargeMethod, type TurnTool } from "./store.js";
+import { Store, type Charge, type ChargeMethod, type Recurring, type TurnTool } from "./store.js";
 
 export interface PeyPort {
   push(input: PushInput): Promise<PushResult>;
@@ -28,6 +38,10 @@ export interface PeyPort {
   transaction?(id: string): Promise<PeyTransaction | null>;
   qrTransactions?(idc: string): Promise<PeyTransactionPage>;
   paymentLink?(id: string): Promise<PeyPaymentLink | null>;
+  /** Lo que pey registró de verdad, para "mis últimos pagos". */
+  transactionsByApiKey?(nextToken?: string): Promise<PeyTransactionPage>;
+  transactionsByBankAccount?(bankAccountId: string, nextToken?: string): Promise<PeyTransactionPage>;
+  bankAccount?(id: string): Promise<PeyBankAccount | null>;
 }
 
 export interface FlowDeps {
@@ -75,6 +89,11 @@ function peyConcept(concept: string): string {
   return concept.length <= 40 ? concept : `${concept.slice(0, 39).trimEnd()}…`;
 }
 
+/** " · uñas", o nada si el cobro no lleva concepto propio. */
+function conceptTail(charge: { concept: string }): string {
+  return charge.concept === DEFAULT_CONCEPT ? "" : ` · ${charge.concept}`;
+}
+
 function minutes(seconds: number): string {
   const total = Math.round(seconds / 60);
   if (total >= 60 && total % 60 === 0) return total === 60 ? "1 hora" : `${total / 60} horas`;
@@ -111,6 +130,72 @@ function logPeyError(error: unknown, charge: Charge): void {
   } else console.error("cobro", error instanceof Error ? error.message : error);
 }
 
+/** Un día entero para aceptar un cobro que nadie está esperando frente al celular. */
+const RECURRING_EXPIRATION_SEC = 24 * 3600;
+
+/**
+ * Manda la notificación CoDi de un cobro ya apartado en el libro. Si pey no
+ * acepta un plazo largo, lo intenta con el mínimo que documenta (6 minutos).
+ */
+async function sendPush(
+  deps: FlowDeps,
+  charge: Charge,
+  numRef: string,
+  expirationSec: number,
+): Promise<{ expirationSec: number }> {
+  if (!charge.payerPhone) throw new Error("Falta el celular");
+  const input: PushInput = {
+    amountCents: charge.amountCents,
+    phone: charge.payerPhone,
+    concept: peyConcept(charge.concept),
+    numRef,
+    chargeId: charge.id,
+    expirationSec,
+  };
+  let used = expirationSec;
+  let sent: PushResult;
+  try {
+    sent = await deps.pey.push(input);
+  } catch (error) {
+    const tooLong = error instanceof PeyError && error.status === 400 && /expir/i.test(error.message);
+    if (!tooLong || expirationSec <= deps.config.pushExpirationSec) throw error;
+    used = deps.config.pushExpirationSec;
+    sent = await deps.pey.push({ ...input, expirationSec: used });
+  }
+  const current = deps.store.getCharge(charge.id) ?? charge;
+  deps.store.updateCharge({
+    ...current,
+    expiresAt: deps.now() + used * 1000,
+    peyTransactionId: sent.transactionId || current.peyTransactionId,
+    peyExternalId: sent.codiId || current.peyExternalId,
+  });
+  return { expirationSec: used };
+}
+
+/** Deja activo el cobro recurrente de un cobro que se confirmó con "cada mes". */
+function startRecurring(store: Store, charge: Charge, now: number): Recurring | null {
+  if (!charge.repeat || !charge.payerPhone) return null;
+  const existing = store
+    .listRecurrings(charge.owner)
+    .find((plan) => plan.active && plan.payerPhone === charge.payerPhone && plan.every === charge.repeat);
+  const plan: Recurring = {
+    id: existing?.id ?? randomUUID(),
+    owner: charge.owner,
+    payerName: charge.payerName,
+    payerPhone: charge.payerPhone,
+    amountCents: charge.amountCents,
+    concept: charge.concept,
+    every: charge.repeat,
+    nextAt: nextOccurrence(now, charge.repeat),
+    active: true,
+    createdAt: existing?.createdAt ?? now,
+    lastChargeId: charge.id,
+    missed: 0,
+  };
+  store.upsertRecurring(plan);
+  return plan;
+}
+
 async function confirm(deps: FlowDeps, owner: string, chargeId: string): Promise<Outbound[]> {
   const now = deps.now();
   const charge = deps.store.getCharge(chargeId);
@@ -130,37 +215,31 @@ async function confirm(deps: FlowDeps, owner: string, chargeId: string): Promise
   }
 
   const numRef = charge.method === "link" ? null : newNumRef(deps.store.usedNumRefs());
+  // Un QR fijo no vence; lo demás sí, según su tipo.
+  const qrSeconds = charge.reusable ? 0 : deps.config.qrExpirationSec;
   const expiresAt =
     charge.method === "push"
       ? now + deps.config.pushExpirationSec * 1000
-      : charge.method === "qr"
-        ? now + deps.config.qrExpirationSec * 1000
+      : charge.method === "qr" && !charge.reusable
+        ? now + qrSeconds * 1000
         : null;
   const locked: Charge = { ...charge, status: "pending", numRef, expiresAt };
   deps.store.updateCharge(locked);
   const amount = formatMxn(charge.amountCents);
+  const tail = conceptTail(charge);
   try {
     if (charge.method === "push") {
-      if (!charge.payerPhone || !numRef) throw new Error("Falta el celular");
-      const sent = await deps.pey.push({
-        amountCents: charge.amountCents,
-        phone: charge.payerPhone,
-        concept: peyConcept(charge.concept),
-        numRef,
-        chargeId: charge.id,
-        expirationSec: deps.config.pushExpirationSec,
-      });
-      const current = deps.store.getCharge(charge.id) ?? locked;
-      deps.store.updateCharge({
-        ...current,
-        peyTransactionId: sent.transactionId || current.peyTransactionId,
-        peyExternalId: sent.codiId || current.peyExternalId,
-      });
-      const wait = minutes(deps.config.pushExpirationSec);
+      if (!numRef) throw new Error("Falta la referencia");
+      const sent = await sendPush(deps, locked, numRef, deps.config.pushExpirationSec);
+      const wait = minutes(sent.expirationSec);
+      const plan = startRecurring(deps.store, charge, now);
+      const again = plan
+        ? ` Queda como cobro recurrente: se lo mando solo ${frequencyLabel(plan.every)}; el siguiente, el ${shortDate(plan.nextAt)}. Para detenerlo dime "ya no le cobres a ${charge.payerName === PAYER_SELF ? "mí" : charge.payerName}".`
+        : "";
       const text =
         charge.payerName === PAYER_SELF
-          ? `Listo, ya salió. Te llega la notificación CoDi por ${amount} en la app de tu banco: ábrela y acéptala. Tienes ${wait}. Te aviso cuando caiga.`
-          : `Listo, ya salió. A ${charge.payerName} le llega la notificación CoDi por ${amount} en la app de su banco (${prettyPhone(charge.payerPhone)}). Tiene ${wait} para aceptarla. Te aviso cuando caiga.`;
+          ? `Listo, ya salió. Te llega la notificación CoDi por ${amount} en la app de tu banco: ábrela y acéptala. Tienes ${wait}. Te aviso cuando caiga.${again}`
+          : `Listo, ya salió. A ${charge.payerName} le llega la notificación CoDi por ${amount} en la app de su banco (${prettyPhone(charge.payerPhone ?? "")}). Tiene ${wait} para aceptarla. Te aviso cuando caiga.${again}`;
       remember(deps.store, owner, "assistant", text, now);
       return [{ kind: "text", to: owner, text }];
     }
@@ -171,13 +250,19 @@ async function confirm(deps: FlowDeps, owner: string, chargeId: string): Promise
         concept: peyConcept(charge.concept),
         numRef,
         chargeId: charge.id,
-        expirationSec: deps.config.qrExpirationSec,
+        expirationSec: qrSeconds,
       });
       if (!sent.qrString) throw new Error("Pey no devolvió el QR");
       const png = await (deps.renderQr ?? renderQrPng)(sent.qrString);
       const current = deps.store.getCharge(charge.id) ?? locked;
       deps.store.updateCharge({ ...current, peyExternalId: sent.id || current.peyExternalId });
-      const caption = `QR CoDi por ${amount} · ${charge.concept}. Se escanea desde la app del banco, en la opción CoDi. Vale ${minutes(deps.config.qrExpirationSec)}. Te aviso cuando caiga.`;
+      const what = charge.openAmount ? "de monto abierto" : `por ${amount}`;
+      const how = charge.openAmount
+        ? "Quien paga lo escanea desde la app de su banco, en la opción CoDi, y escribe el monto."
+        : "Se escanea desde la app del banco, en la opción CoDi.";
+      const caption = charge.reusable
+        ? `QR CoDi fijo ${what}${tail}. ${how} No vence y sirve para muchos pagos: imprímelo o tenlo a la mano. Cada pago que caiga te lo aviso.`
+        : `QR CoDi ${what}${tail}. ${how} Vale ${minutes(qrSeconds)}. Te aviso cuando caiga.`;
       remember(deps.store, owner, "assistant", caption, now);
       return [{ kind: "image", to: owner, png, caption }];
     }
@@ -187,6 +272,7 @@ async function confirm(deps: FlowDeps, owner: string, chargeId: string): Promise
       chargeId: charge.id,
       successUrl: `${deps.config.publicBaseUrl}/pago/listo`,
       backUrl: `${deps.config.publicBaseUrl}/pago/volver`,
+      ...(charge.tip ? { hasTip: true } : {}),
     });
     const current = deps.store.getCharge(charge.id) ?? locked;
     deps.store.updateCharge({
@@ -194,7 +280,8 @@ async function confirm(deps: FlowDeps, owner: string, chargeId: string): Promise
       peyExternalId: sent.id || current.peyExternalId,
       linkUrl: sent.url,
     });
-    const text = `Link para pagar ${amount} · ${charge.concept} (CoDi o tarjeta):\n${sent.url}\nTe aviso cuando caiga.`;
+    const tipNote = charge.tip ? ", con opción de propina" : "";
+    const text = `Link para pagar ${amount}${tail} (CoDi o tarjeta${tipNote}):\n${sent.url}\nTe aviso cuando caiga.`;
     remember(deps.store, owner, "assistant", text, now);
     return [{ kind: "text", to: owner, text }];
   } catch (error) {
@@ -219,7 +306,8 @@ async function onButton(deps: FlowDeps, owner: string, buttonId: string): Promis
     if (charge.status === "awaiting_confirm") {
       deps.store.updateCharge({ ...charge, status: "cancelled" });
     }
-    const text = `Cancelé el cobro de ${formatMxn(charge.amountCents)}. No se envió nada.`;
+    const what = charge.openAmount ? "el cobro" : `el cobro de ${formatMxn(charge.amountCents)}`;
+    const text = `Cancelé ${what}. No se envió nada.`;
     remember(deps.store, owner, "assistant", text, deps.now());
     return [{ kind: "text", to: owner, text }];
   }
@@ -249,22 +337,74 @@ async function onConfirmWord(deps: FlowDeps, owner: string, clean: string): Prom
   return null;
 }
 
+/** Lo más largo que se le pasa al modelo de un solo mensaje. */
+const MAX_TEXT = 1500;
+/** Mensajes por minuto que una persona puede mandarle al modelo. */
+const RATE_LIMIT = 20;
+const RATE_WINDOW_MS = 60_000;
+const recentByStore = new WeakMap<Store, Map<string, number[]>>();
+
+/** true = va demasiado rápido. `first` dice si es la primera vez que se pasa, para avisarle una sola vez. */
+function tooFast(store: Store, owner: string, now: number): { limited: boolean; first: boolean } {
+  let byOwner = recentByStore.get(store);
+  if (!byOwner) {
+    byOwner = new Map();
+    recentByStore.set(store, byOwner);
+  }
+  const recent = (byOwner.get(owner) ?? []).filter((at) => now - at < RATE_WINDOW_MS);
+  recent.push(now);
+  byOwner.set(owner, recent);
+  return { limited: recent.length > RATE_LIMIT, first: recent.length === RATE_LIMIT + 1 };
+}
+
+/** Lo que el agente puede preguntarle a pey mientras conversa. */
+function servicesOf(deps: FlowDeps): AgentServices {
+  const { pey, config } = deps;
+  const accountId = config.peyBankAccountId ?? null;
+  return {
+    refresh: (owner) => refreshOwner(deps, owner),
+    payments:
+      accountId && pey.transactionsByBankAccount
+        ? async () => (await pey.transactionsByBankAccount!(accountId)).items
+        : pey.transactionsByApiKey
+          ? async () => (await pey.transactionsByApiKey!()).items
+          : undefined,
+    account: accountId && pey.bankAccount ? () => pey.bankAccount!(accountId) : undefined,
+  };
+}
+
 async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outbound[]> {
   const now = deps.now();
-  const clean = text.trim();
-  if (!clean) return [{ kind: "text", to: owner, text: "Dime qué vendiste o a quién le cobro y cuánto." }];
+  const clean = text.trim().slice(0, MAX_TEXT);
+  if (!clean) return [{ kind: "text", to: owner, text: "Dime cuánto cobro y a quién, o pídeme el corte." }];
   const answered = await onConfirmWord(deps, owner, clean);
   if (answered) return answered;
+  const speed = tooFast(deps.store, owner, now);
+  if (speed.limited) {
+    return speed.first
+      ? [{ kind: "text", to: owner, text: "Voy un poco saturado con tantos mensajes seguidos. Dame un minuto y seguimos." }]
+      : [];
+  }
   remember(deps.store, owner, "user", clean, now);
-  const result = await runAgent({
-    store: deps.store,
-    config: deps.config,
-    owner,
-    now,
-    complete: deps.complete,
-  });
+  let result: Awaited<ReturnType<typeof runAgent>>;
+  try {
+    result = await runAgent({
+      store: deps.store,
+      config: deps.config,
+      owner,
+      now,
+      complete: deps.complete,
+      services: servicesOf(deps),
+    });
+  } catch (error) {
+    // El modelo no contestó (red, saturación): la persona no se queda sin respuesta.
+    console.error("agente", error instanceof Error ? error.message : error);
+    const reply = "Se me fue la señal un momento. Mándamelo otra vez, porfa.";
+    remember(deps.store, owner, "assistant", reply, now);
+    return [{ kind: "text", to: owner, text: reply }];
+  }
   if (result.charge) {
-    const card = chargeCard(result.charge, !!deps.config.testMaxCents);
+    const card = chargeCard(result.charge, !!deps.config.testMaxCents, now);
     remember(deps.store, owner, "assistant", card, now, result.tools);
     return [
       {
@@ -276,9 +416,31 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
       },
     ];
   }
-  const reply = result.reply ?? "No te caché. Dime qué vendiste o a quién le cobro, cuánto y por qué.";
+  const reply = result.reply ?? 'No te caché. Dime, por ejemplo: "cobra 150" o "cóbrale 200 a Ana".';
   remember(deps.store, owner, "assistant", reply, now, result.tools);
   return [{ kind: "text", to: owner, text: reply }];
+}
+
+/** Una persona, un mensaje a la vez: dos seguidos no se pisan el libro ni la conversación. */
+const queueByStore = new WeakMap<Store, Map<string, Promise<unknown>>>();
+
+function inTurn<T>(store: Store, owner: string, task: () => Promise<T>): Promise<T> {
+  let byOwner = queueByStore.get(store);
+  if (!byOwner) {
+    byOwner = new Map();
+    queueByStore.set(store, byOwner);
+  }
+  const queue = byOwner;
+  const run = (queue.get(owner) ?? Promise.resolve()).then(task, task);
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  queue.set(owner, tail);
+  void tail.then(() => {
+    if (queue.get(owner) === tail) queue.delete(owner);
+  });
+  return run;
 }
 
 export async function handleInbound(
@@ -288,26 +450,28 @@ export async function handleInbound(
   if (!isAllowed(inbound.owner, deps.config.allowedPhones)) return { messages: [], claimed: false };
   const key = `wa:${inbound.messageId}`;
   if (deps.store.claim(key) === "skip") return { messages: [], claimed: false };
-  try {
-    let messages: Outbound[];
-    if (inbound.type === "button") messages = await onButton(deps, inbound.owner, inbound.buttonId);
-    else if (inbound.type === "audio") {
-      let transcript = "";
-      try {
-        transcript = (await deps.transcribe(inbound.mediaId, inbound.mime)).trim();
-      } catch (error) {
-        console.error("nota de voz", error instanceof Error ? error.message : error);
-        transcript = "";
-      }
-      messages = transcript
-        ? await onText(deps, inbound.owner, transcript)
-        : [{ kind: "text", to: inbound.owner, text: "No te entendí en la nota de voz. ¿Me lo escribes?" }];
-    } else messages = await onText(deps, inbound.owner, inbound.text);
-    return { messages, claimed: true };
-  } catch (error) {
-    deps.store.release(key);
-    throw error;
-  }
+  return inTurn(deps.store, inbound.owner, async () => {
+    try {
+      let messages: Outbound[];
+      if (inbound.type === "button") messages = await onButton(deps, inbound.owner, inbound.buttonId);
+      else if (inbound.type === "audio") {
+        let transcript = "";
+        try {
+          transcript = (await deps.transcribe(inbound.mediaId, inbound.mime)).trim();
+        } catch (error) {
+          console.error("nota de voz", error instanceof Error ? error.message : error);
+          transcript = "";
+        }
+        messages = transcript
+          ? await onText(deps, inbound.owner, transcript)
+          : [{ kind: "text", to: inbound.owner, text: "No te entendí en la nota de voz. ¿Me lo escribes?" }];
+      } else messages = await onText(deps, inbound.owner, inbound.text);
+      return { messages, claimed: true };
+    } catch (error) {
+      deps.store.release(key);
+      throw error;
+    }
+  });
 }
 
 export function ackInbound(store: Store, messageId: string): void {
@@ -326,15 +490,35 @@ function paidText(charge: Charge, settled: string): string {
       : charge.payerName === PAYER_OPEN
         ? ""
         : ` de ${charge.payerName}`;
-  return `Ya cayó: ${amount}${from} · ${charge.concept}. Confirmado por CoDi.${settled}`;
+  const tip = charge.tipCents ? ` Más ${formatMxn(charge.tipCents)} de propina.` : "";
+  return `Ya cayó: ${amount}${from}${conceptTail(charge)}. Confirmado por CoDi.${tip}${settled}`;
+}
+
+function withGoal(store: Store, owner: string, text: string, now: number): string {
+  const goal = goalLine(store, owner, now);
+  return goal ? `${text} Meta del día: ${goal}.` : text;
 }
 
 /**
- * Marca un cobro como pagado, una sola vez. Si quien pagó tenía una deuda
- * apuntada, se le abona. Devuelve el aviso para quien cobró.
+ * Marca un cobro como pagado, una sola vez. Si quien pagó tenía un fiado
+ * apuntado, se le abona. Devuelve el aviso para quien cobró.
  */
-function markPaid(store: Store, charge: Charge, paidAt: number, now: number): PaidNotice {
-  const paid: Charge = { ...charge, status: "paid", paidAt, paidNoticeSent: false };
+function markPaid(
+  store: Store,
+  charge: Charge,
+  paidAt: number,
+  now: number,
+  got: { amountCents?: number; tipCents?: number } = {},
+): PaidNotice {
+  const paid: Charge = {
+    ...charge,
+    status: "paid",
+    paidAt,
+    paidNoticeSent: false,
+    // En un QR de monto abierto, el monto lo puso quien pagó.
+    ...(charge.openAmount && got.amountCents ? { amountCents: got.amountCents } : {}),
+    ...(got.tipCents ? { tipCents: got.tipCents } : {}),
+  };
   store.updateCharge(paid);
   let settled = "";
   if (paid.payerName !== PAYER_SELF && paid.payerName !== PAYER_OPEN) {
@@ -346,10 +530,57 @@ function markPaid(store: Store, charge: Charge, paidAt: number, now: number): Pa
           : " Su fiado quedó saldado.";
     }
   }
-  const goal = goalLine(store, paid.owner, now);
-  const text = `${paidText(paid, settled)}${goal ? ` Meta del día: ${goal}.` : ""}`;
+  const text = withGoal(store, paid.owner, paidText(paid, settled), now);
   remember(store, paid.owner, "assistant", text, now);
   return { chargeId: paid.id, owner: paid.owner, text };
+}
+
+/** Pagos de un QR fijo que se recuerdan para no contar el mismo dos veces. */
+const SEEN_KEPT = 300;
+
+/**
+ * Un pago más en un QR fijo: el QR sigue abierto y el pago queda como una
+ * venta aparte. Si ese pago ya se había contado, no pasa nada.
+ */
+function recordFixedSale(
+  store: Store,
+  qr: Charge,
+  payment: { id: string; amountCents: number; paidAt: number },
+  now: number,
+): PaidNotice | null {
+  if (!payment.id || (qr.seenTransactions ?? []).includes(payment.id)) return null;
+  const sale: Charge = {
+    id: randomUUID(),
+    owner: qr.owner,
+    payerName: PAYER_OPEN,
+    payerPhone: null,
+    amountCents: payment.amountCents > 0 ? payment.amountCents : qr.amountCents,
+    concept: qr.concept,
+    method: "qr",
+    status: "paid",
+    numRef: null,
+    peyTransactionId: payment.id,
+    peyExternalId: qr.peyExternalId,
+    linkUrl: null,
+    createdAt: now,
+    confirmBy: now,
+    expiresAt: null,
+    paidAt: payment.paidAt,
+    expiryNotified: false,
+    paidNoticeSent: false,
+    parentId: qr.id,
+    ...(qr.items ? { items: qr.items } : {}),
+  };
+  store.insertCharge(sale);
+  store.updateCharge({ ...qr, seenTransactions: [...(qr.seenTransactions ?? []), payment.id].slice(-SEEN_KEPT) });
+  const text = withGoal(
+    store,
+    qr.owner,
+    `Ya cayó: ${formatMxn(sale.amountCents)} en tu QR fijo${conceptTail(sale)}. Confirmado por CoDi.`,
+    now,
+  );
+  remember(store, qr.owner, "assistant", text, now);
+  return { chargeId: sale.id, owner: qr.owner, text };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -365,22 +596,28 @@ function chargeIdOf(metadata: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+/** Pesos de pey (150.5) a centavos. 0 si no viene. */
+function centsOf(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value * 100) : 0;
+}
+
 export function applyPeyEvent(store: Store, body: Record<string, unknown>, now: number): PaidNotice | null {
   const type = String(body.type ?? "");
   let charge: Charge | null = null;
   const first = Array.isArray(body.transactions) ? record(body.transactions[0]) : null;
+  const txn = String(body.transactionId ?? "");
   if (type === "codi.qr.payment_received" || type === "codi.pn.payment_received") {
     const byMeta = chargeIdOf(body.metadata);
     const numRef = String(body.numRef ?? "");
-    const txn = String(body.transactionId ?? "");
     const qrId = String(body.codiQrId ?? "");
     charge =
       (byMeta ? store.getCharge(byMeta) : null) ??
       store.findCharge(
         (item) =>
-          (!!numRef && item.numRef === numRef) ||
-          (!!txn && item.peyTransactionId === txn) ||
-          (!!qrId && item.peyExternalId === qrId),
+          !item.parentId &&
+          ((!!numRef && item.numRef === numRef) ||
+            (!!txn && item.peyTransactionId === txn) ||
+            (!!qrId && item.peyExternalId === qrId)),
       ) ??
       null;
   } else if (type === "payment_link.status_updated") {
@@ -392,13 +629,21 @@ export function applyPeyEvent(store: Store, body: Record<string, unknown>, now: 
   } else {
     return null;
   }
-  if (!charge || (charge.status === "paid" && charge.paidNoticeSent)) return null;
-  if (charge.status !== "paid") {
-    const datePaid =
-      typeof body.datePaid === "number" ? body.datePaid : first && typeof first.datePaid === "number" ? first.datePaid : null;
-    return markPaid(store, charge, datePaid === null ? now : datePaid * 1000, now);
+  if (!charge) return null;
+  const datePaid =
+    typeof body.datePaid === "number" ? body.datePaid : first && typeof first.datePaid === "number" ? first.datePaid : null;
+  const paidAt = datePaid === null ? now : datePaid * 1000;
+  if (charge.reusable) {
+    return recordFixedSale(store, charge, { id: txn, amountCents: centsOf(body.amount), paidAt }, now);
   }
-  return { chargeId: charge.id, owner: charge.owner, text: paidText(charge, "") };
+  if (charge.status === "paid") {
+    return charge.paidNoticeSent ? null : { chargeId: charge.id, owner: charge.owner, text: paidText(charge, "") };
+  }
+  const breakdown = record(first?.amountBreakdown);
+  return markPaid(store, charge, paidAt, now, {
+    amountCents: centsOf(body.amount),
+    tipCents: centsOf(breakdown?.tip),
+  });
 }
 
 /** Hasta cuándo vale la pena preguntarle a Pey por un cobro que ya venció aquí. */
@@ -406,55 +651,95 @@ const LATE_PAYMENT_MS = 10 * 60 * 1000;
 /** Pasado este tiempo, un cobro abierto se consulta con menos frecuencia. */
 const OLD_CHARGE_MS = 15 * 60 * 1000;
 
-async function paidAtFromPey(pey: PeyPort, charge: Charge, now: number): Promise<number | null> {
+interface PeyPayment {
+  id: string;
+  amountCents: number;
+  tipCents: number;
+  paidAt: number;
+}
+
+/** Los pagos que pey tiene de un cobro. Un QR fijo puede traer varios. */
+async function paymentsFromPey(pey: PeyPort, charge: Charge, now: number): Promise<PeyPayment[]> {
   if (charge.method === "push") {
-    if (!charge.peyTransactionId || !pey.transaction) return null;
+    if (!charge.peyTransactionId || !pey.transaction) return [];
     const tx = await pey.transaction(charge.peyTransactionId);
-    return tx?.status === "PAID" ? (tx.datePaid ?? now) : null;
+    return tx?.status === "PAID"
+      ? [{ id: tx.id, amountCents: tx.amountCents, tipCents: 0, paidAt: tx.datePaid ?? now }]
+      : [];
   }
   if (charge.method === "qr") {
-    if (!charge.peyExternalId || !pey.qrTransactions) return null;
+    if (!charge.peyExternalId || !pey.qrTransactions) return [];
     const page = await pey.qrTransactions(charge.peyExternalId);
-    const tx = page.items.find((item) => item.status === "PAID");
-    return tx ? (tx.datePaid ?? now) : null;
+    return page.items
+      .filter((item) => item.status === "PAID")
+      .map((item) => ({ id: item.id, amountCents: item.amountCents, tipCents: 0, paidAt: item.datePaid ?? now }));
   }
-  if (!charge.peyExternalId || !pey.paymentLink) return null;
+  if (!charge.peyExternalId || !pey.paymentLink) return [];
   const link = await pey.paymentLink(charge.peyExternalId);
-  return link?.status === "paid" ? (link.datePaid ?? now) : null;
+  return link?.status === "paid"
+    ? [{ id: link.id, amountCents: 0, tipCents: link.tipCents, paidAt: link.datePaid ?? now }]
+    : [];
 }
 
 /**
  * Le pregunta a Pey por los cobros que siguen abiertos. Así el aviso de "ya
  * cayó" llega aunque el webhook no esté configurado o se pierda. Va antes de
  * takeExpired: un cobro pagado en el último segundo no se da por vencido.
+ * Con `owner` revisa solo los de esa persona, ya (para "¿ya pagó?").
  */
-export async function reconcilePending(deps: FlowDeps, max = 10): Promise<PaidNotice[]> {
+export async function reconcilePending(
+  deps: FlowDeps,
+  options: { max?: number; owner?: string } = {},
+): Promise<PaidNotice[]> {
   const now = deps.now();
-  // Un cobro reciente se consulta en cada vuelta; uno viejo (un QR de una hora), una de cada cinco.
-  const slowTurn = Math.floor(now / 30_000) % 5 !== 0;
+  // Un cobro reciente se consulta en cada vuelta; uno viejo (un QR de una hora, un QR fijo), una de cada cinco.
+  const slowTurn = !options.owner && Math.floor(now / 30_000) % 5 !== 0;
   const open = deps.store
-    .listCharges()
+    .listCharges(options.owner)
     .filter(
       (charge) =>
         charge.status === "pending" ||
         (charge.status === "expired" && charge.expiresAt !== null && now - charge.expiresAt < LATE_PAYMENT_MS),
     )
     .filter((charge) => !(slowTurn && now - charge.createdAt > OLD_CHARGE_MS))
-    .slice(-max);
+    .slice(-(options.max ?? 10));
   const notices: PaidNotice[] = [];
   for (const charge of open) {
     try {
-      const paidAt = await paidAtFromPey(deps.pey, charge, now);
-      if (paidAt === null) continue;
+      const payments = await paymentsFromPey(deps.pey, charge, now);
+      if (!payments.length) continue;
       const current = deps.store.getCharge(charge.id);
+      if (!current) continue;
+      if (current.reusable) {
+        // Del más viejo al más nuevo, y releyendo el QR: cada venta le apunta su pago.
+        for (const payment of [...payments].reverse()) {
+          const qr = deps.store.getCharge(charge.id);
+          const notice = qr ? recordFixedSale(deps.store, qr, payment, now) : null;
+          if (notice) notices.push(notice);
+        }
+        continue;
+      }
       // El webhook pudo llegar mientras preguntábamos.
-      if (!current || current.status === "paid") continue;
-      notices.push(markPaid(deps.store, current, paidAt, now));
+      if (current.status === "paid") continue;
+      const payment = payments[0];
+      if (!payment) continue;
+      notices.push(markPaid(deps.store, current, payment.paidAt, now, payment));
     } catch (error) {
       console.error("pey estado", error instanceof Error ? error.message : error);
     }
   }
   return notices;
+}
+
+/**
+ * "¿Ya pagó?": consulta a pey en ese momento los cobros de esa persona. Lo que
+ * resulte pagado se da por avisado, porque se lo va a decir la respuesta misma.
+ */
+async function refreshOwner(deps: FlowDeps, owner: string): Promise<void> {
+  for (const notice of await reconcilePending(deps, { owner })) {
+    const current = deps.store.getCharge(notice.chargeId);
+    if (current) deps.store.updateCharge({ ...current, paidNoticeSent: true });
+  }
 }
 
 export function takeExpired(store: Store, now: number): { owner: string; text: string }[] {
@@ -468,8 +753,92 @@ export function takeExpired(store: Store, now: number): { owner: string; text: s
     store.updateCharge({ ...charge, status: "expired", expiryNotified: true });
     const to =
       charge.payerName === PAYER_SELF ? "" : charge.payerName === PAYER_OPEN ? "" : ` a ${charge.payerName}`;
-    const text = `El cobro de ${formatMxn(charge.amountCents)}${to} · ${charge.concept} venció sin pagarse. Dime "repítelo" y lo mando otra vez.`;
+    const what = charge.openAmount ? "El cobro de monto abierto" : `El cobro de ${formatMxn(charge.amountCents)}`;
+    const text = `${what}${to}${conceptTail(charge)} venció sin pagarse. Dime "repítelo" y lo mando otra vez.`;
     remember(store, charge.owner, "assistant", text, now);
     return { owner: charge.owner, text };
   });
+}
+
+/** Cobros recurrentes seguidos sin pagar antes de pausarlo solo: nadie recibe cobros que ya no quiere. */
+const MAX_MISSED = 3;
+const RETRY_LATER_MS = 6 * 3_600_000;
+
+/**
+ * Manda los cobros recurrentes que ya tocan. Cada uno se confirmó una vez al
+ * crearlo; aquí salen solos y se le avisa a quien cobra. Va en el reloj.
+ */
+export async function runRecurring(deps: FlowDeps): Promise<{ owner: string; text: string }[]> {
+  const now = deps.now();
+  const notices: { owner: string; text: string }[] = [];
+  const tell = (owner: string, text: string) => {
+    remember(deps.store, owner, "assistant", text, now);
+    notices.push({ owner, text });
+  };
+  for (const plan of deps.store.listRecurrings().filter((item) => item.active && item.nextAt <= now)) {
+    const amount = formatMxn(plan.amountCents);
+    const label = `${plan.payerName} (${amount} ${frequencyLabel(plan.every)})`;
+    const last = plan.lastChargeId ? deps.store.getCharge(plan.lastChargeId) : null;
+    const missed = last && last.status !== "paid" ? plan.missed + 1 : 0;
+    if (missed >= MAX_MISSED) {
+      deps.store.upsertRecurring({ ...plan, active: false, missed });
+      tell(plan.owner, `Pausé el cobro recurrente de ${label}: lleva ${missed} seguidos sin pagar. Si quieres retomarlo, dímelo.`);
+      continue;
+    }
+    const used = deps.store.confirmedCentsSince(plan.owner, mexicoDayStart(now));
+    if (used + plan.amountCents > deps.config.dailyCapCents) {
+      deps.store.upsertRecurring({ ...plan, nextAt: now + RETRY_LATER_MS });
+      tell(plan.owner, `No mandé el cobro recurrente de ${label}: pasa el tope de cobros de hoy. Lo intento más tarde.`);
+      continue;
+    }
+    const numRef = newNumRef(deps.store.usedNumRefs());
+    const charge: Charge = {
+      id: randomUUID(),
+      owner: plan.owner,
+      payerName: plan.payerName,
+      payerPhone: plan.payerPhone,
+      amountCents: plan.amountCents,
+      concept: plan.concept,
+      method: "push",
+      status: "pending",
+      numRef,
+      peyTransactionId: null,
+      peyExternalId: null,
+      linkUrl: null,
+      createdAt: now,
+      confirmBy: now,
+      expiresAt: now + RECURRING_EXPIRATION_SEC * 1000,
+      paidAt: null,
+      expiryNotified: false,
+      paidNoticeSent: false,
+      recurringId: plan.id,
+    };
+    deps.store.insertCharge(charge);
+    // El siguiente cae en su fecha de siempre, aunque este haya salido tarde.
+    let nextAt = nextOccurrence(plan.nextAt, plan.every);
+    while (nextAt <= now) nextAt = nextOccurrence(nextAt, plan.every);
+    try {
+      const sent = await sendPush(deps, charge, numRef, RECURRING_EXPIRATION_SEC);
+      deps.store.upsertRecurring({ ...plan, nextAt, lastChargeId: charge.id, missed });
+      const who = plan.payerName === PAYER_SELF ? "Te mandé" : `Le mandé a ${plan.payerName}`;
+      const whose = plan.payerName === PAYER_SELF ? "tu" : "su";
+      tell(
+        plan.owner,
+        `Cobro recurrente: ${who} ${whose} cobro ${plan.every} de ${amount}${conceptTail(plan)}. Tiene ${minutes(sent.expirationSec)} para aceptarlo en la app de ${whose} banco. Te aviso cuando caiga. El siguiente, el ${shortDate(nextAt)}.`,
+      );
+    } catch (error) {
+      logPeyError(error, charge);
+      const current = deps.store.getCharge(charge.id) ?? charge;
+      deps.store.updateCharge({ ...current, status: "failed" });
+      const failures = plan.missed + 1;
+      if (failures >= MAX_MISSED) {
+        deps.store.upsertRecurring({ ...plan, active: false, missed: failures });
+        tell(plan.owner, `Pausé el cobro recurrente de ${label}: no ha podido salir ${failures} veces. ${explainPeyError(error, "push")}`);
+      } else {
+        deps.store.upsertRecurring({ ...plan, nextAt: now + RETRY_LATER_MS, missed: failures, lastChargeId: null });
+        tell(plan.owner, `No salió el cobro recurrente de ${label}. ${explainPeyError(error, "push")} Lo vuelvo a intentar más tarde.`);
+      }
+    }
+  }
+  return notices;
 }

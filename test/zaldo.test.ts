@@ -265,7 +265,7 @@ test("repetir, apuntar y el saldo no mueven dinero", async () => {
   flow.complete = tool("repeat_charge", { payerName: "Luis" });
   const again = await messages(flow, { type: "text", owner: OWNER, messageId: "r2", text: "otra vez" });
   assert.equal(again[0]?.kind, "buttons");
-  assert.equal(store.listCharges(OWNER).filter((charge) => charge.status === "awaiting_confirm").length, 2);
+  assert.equal(store.listCharges(OWNER).filter((charge) => charge.status === "awaiting_confirm").length, 1);
   assert.equal(pey.pushes.length, 0);
 
   flow.complete = toolOnce("add_note", { kind: "gasto", amount: 200, concept: "gasolina" });

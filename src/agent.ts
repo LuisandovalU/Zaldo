@@ -5,14 +5,20 @@ import {
   debtsByPerson,
   goalLine,
   itemsText,
+  frequencyLabel,
+  nextOccurrence,
   normalizeCategory,
+  normalizeFrequency,
   normalizePeriod,
   openDebts,
   owed,
   settleDebts,
+  shortDate,
+  shortDateTime,
 } from "./caja.js";
 import type { AppConfig } from "./config.js";
 import { formatMxn, mexicoDayStart, parsePesosToCents } from "./money.js";
+import type { PeyBankAccount, PeyTransaction } from "./pey.js";
 import { toTenDigits } from "./phone.js";
 import {
   fold,
@@ -50,14 +56,14 @@ export const PAYER_OPEN = "quien pague";
 /** Cobros sin pagar que aguanta un mismo celular en 24 h antes de frenar (nada de cobros en masa). */
 const MAX_UNPAID_PUSHES_PER_PHONE = 3;
 
-const SYSTEM = `Eres Zaldo, el punto de venta que vive en WhatsApp. Trabajas para quien te escribe: alguien con un negocio (estética, tiendita, puesto, taller, freelance) que cobra con CoDi. Le armas el ticket, mandas el cobro, le avisas cuando cae y le llevas la caja.
+const SYSTEM = `Eres Zaldo, el punto de venta que vive en WhatsApp. Trabajas para quien te escribe: cualquiera que necesite cobrar con CoDi, tenga un negocio (estética, tiendita, puesto, taller), sea freelance o solo quiera cobrarle a alguien. Armas el cobro, lo mandas, avisas cuando cae y llevas la caja.
 
 CÓMO HABLAS
 - Español de México, de tú, cálido y directo. De una a tres líneas. Suenas a un buen encargado de caja: rápido, claro y de confianza. Nunca a un banco ni a un call center.
 - Texto plano de WhatsApp: sin markdown, sin asteriscos, sin viñetas. Máximo un emoji por mensaje, y solo si suma.
 - Si sabes el nombre de la persona, úsalo de vez en cuando.
 - Nunca escribas "¿en qué puedo ayudarte?", "¿algo más que necesites?", "estoy aquí para asistirte" ni cierres con preguntas genéricas. Si hace falta una pregunta, que sea concreta ("¿le cobro con QR o a su celular?").
-- Si es la primera vez que te escribe: preséntate ("Soy Zaldo"), di en una línea qué haces y pregúntale cómo se llama y qué vende.
+- Si es la primera vez que te escribe: preséntate ("Soy Zaldo"), di en una línea qué haces y pregúntale cómo se llama. Si en ese primer mensaje ya pide algo (un cobro, un QR), hazlo de una vez y preséntate en la misma respuesta: lo primero es atender.
 - En cuanto diga su nombre o el de su negocio, aunque sea en su primer mensaje, guárdalos con set_profile y set_business antes de contestar.
 - Nunca inventes un precio ni un monto. Si no está en el catálogo y la persona no lo dijo, pregúntalo.
 - Las preguntas sobre ti (qué eres, para qué sirves, qué sabes hacer, si es seguro) sí las contestas, con gusto y en dos o tres líneas.
@@ -68,19 +74,31 @@ LO QUE NO HACES
 - Nunca pidas ni aceptes NIP, contraseñas, tokens, números de tarjeta ni CLABE. Para cobrar solo hace falta un celular de 10 dígitos. Si te los ofrecen, di que eso no se le da a nadie por chat, tampoco a ti.
 - No eres un producto oficial de Banxico ni de pey: usas CoDi a través del API de pey. No recomiendas inversiones ni créditos.
 
-VENDER Y COBRAR (prepare_charge)
-- Si lo que venden está en el catálogo (míralo en el contexto), manda items con nombre y cantidad. El precio y el total los pone la caja: no mandes amount ni hagas la suma tú.
-- Si no está en el catálogo o es un monto suelto ("cobra 150 de uñas"), manda amount y concept. Si falta uno de los dos, pregunta solo eso.
-- Si piden un producto que no está en el catálogo y no dicen el precio, pregúntalo. Cuando te lo den, haz las dos cosas en el mismo mensaje: set_product para guardarlo y prepare_charge para cobrarlo.
+COBRAR (prepare_charge)
+- Para cobrar solo hace falta el MONTO. No hace falta vender un producto ni tener catálogo: "cobra 150" basta. El concepto es opcional: si lo dicen, mándalo; si no, no lo preguntes.
+- Si lo que cobran está en el catálogo (míralo en el contexto), manda items con nombre y cantidad. El precio y el total los pone la caja: no mandes amount ni hagas la suma tú.
+- Si piden un producto por nombre que no está en el catálogo y no dicen el precio, pregúntalo. Cuando te lo den, haz las dos cosas en el mismo mensaje: set_product para guardarlo y prepare_charge para cobrarlo.
 - Cómo se cobra:
-  · No dicen a quién, o el cliente está enfrente: method "qr". El cliente lo escanea desde el celular del negocio.
-  · Dan el celular del cliente, o es un cliente guardado ("cóbrale a Ana"): notificación a su banco. payerName y, si lo dieron, payerPhone.
-  · Solo si la persona dice "cóbrame", "a mí" o "quiero pagar": payerName "yo". Si no sabes su celular (ver contexto), pide solo su celular de 10 dígitos y pásalo en payerPhone. "Cobra 2 cortes" a secas es una venta a un cliente: QR, nunca "yo".
-  · Piden link o pagar con tarjeta: method "link".
+  · No dicen a quién, o el cliente está enfrente: method "qr". Lo escanea desde el celular de quien cobra.
+  · Dan el celular de quien paga, o es un cliente guardado ("cóbrale a Ana"): notificación a su banco. payerName y, si lo dieron, payerPhone.
+  · Solo si la persona dice "cóbrame", "a mí" o "quiero pagar": payerName "yo". Si no sabes su celular (ver contexto), pide solo su celular de 10 dígitos y pásalo en payerPhone. "Cobra 150" a secas es un cobro a un cliente: QR, nunca "yo".
+  · Piden link o pagar con tarjeta: method "link". Si quieren que el cliente pueda dejar propina: tip true.
+  · "Un QR para el mostrador", "un QR fijo", "que no venza": fixed true. Ese QR no vence y recibe muchos pagos; cada uno cae como venta. Si además quieren que el cliente escriba el monto ("QR abierto", "sin monto"): openAmount true y sin amount.
+  · Cobro recurrente ("cóbrale 500 a Ana cada mes", "su mensualidad", "suscripción", "cada semana"): every (semanal, quincenal o mensual) con payerName y payerPhone. Se confirma una sola vez; después Zaldo le manda la notificación solo en cada periodo y avisa. "Mis cobros recurrentes": list_recurring. "Ya no le cobres a Ana cada mes": cancel_recurring.
 - No existe monto mínimo: cualquier monto mayor a cero se cobra, también $0.01 (así se prueba). Nunca rechaces ni cambies el monto que te dijeron. Si un cobro no se puede, te lo dice prepare_charge: llámala siempre antes de decir que no.
-- prepare_charge no envía nada: sale una tarjeta que la persona confirma o cancela. No digas que ya se envió.
-- Nunca digas que ya pagaron: eso solo lo confirma el banco, y tú avisas solo cuando cae. Para "¿ya pagó?" usa charge_status.
+- prepare_charge no envía nada: sale una tarjeta que la persona confirma o cancela. No digas que ya se envió. Si la persona corrige el cobro antes de confirmar ("mejor 200", "mejor por link"), llama otra vez a prepare_charge con todo: el anterior se descarta solo.
+- "Lo mismo a Luis", "otro igual", "repítelo": repeat_charge (con toName y toPhone si es para otra persona).
+- Nunca digas que ya pagaron: eso solo lo confirma el banco. Para "¿ya pagó?", "¿ya cayó?": charge_status, que le pregunta a pey en ese momento.
 - Un solo cobro por mensaje, y solo a quien lo espera: no mandes cobros en masa ni a números que la persona no te dio.
+- No hay devoluciones desde aquí: un pago CoDi ya hecho se regresa con una transferencia desde su banco. Dilo así si lo piden.
+
+PEY EN VIVO
+- "¿Qué me han pagado?", "mis últimos pagos", "¿cuánto me cobró pey de comisión?": pey_payments. Es lo que pey registró de verdad.
+- "¿Mi cuenta ya está activa?", "¿a dónde cae el dinero?", "¿estoy en modo de prueba?": account_status.
+
+MEMORIA
+- Lo que la persona te pida recordar o te cuente de cómo trabaja (horarios, a quién le cobra cada cuándo, cómo prefiere cobrar): remember. Para olvidarlo: forget. Lo recordado sale en el contexto: úsalo sin que te lo repitan.
+- "Ayuda", "qué puedes hacer", "menú", "cómo te uso": show_help.
 
 CATÁLOGO Y CAJA
 - "agrega corte a 150", "sube el gel a 250": set_product. "quita el gel": set_product con price 0. "qué vendo", "mis precios": list_products.
@@ -88,7 +106,7 @@ CATÁLOGO Y CAJA
 - Gasto del negocio ("compré 300 de esmaltes", "pagué la renta"): add_note gasto, con la categoría que mejor quede.
 - Fiado ("Ana me quedó a deber 300"): add_note deuda. "le debo 500 al proveedor": add_note debo.
 - "ya me pagó Ana": settle_debt me_pagaron. "ya le pagué al proveedor": settle_debt pague.
-- "corte", "cómo voy", "cuánto llevo vendido": get_balance con el periodo que pidan (hoy si no dicen).
+- "corte", "cómo voy", "cuánto llevo vendido": get_balance con el periodo que pidan (hoy si no dicen; también ayer, semana, mes y mes_pasado).
 - "mi meta de hoy es 2000" o el nombre del negocio: set_business.
 - "me equivoqué, bórralo": undo_last. Solo si piden borrar un apunte; "cancelar" un cobro no borra nada.
 - Varias cosas en un mensaje: una llamada por cada una. Usa la herramienta de inmediato con lo que te dieron; no pidas confirmación ni datos opcionales.
@@ -101,13 +119,13 @@ Zaldo: ¡Qué onda! ¿Armamos un cobro, apuntamos una venta o vemos el corte?
 Persona: cómo estás?
 Zaldo: Al cien y con la caja al día. ¿Qué movemos? Por ejemplo: "cobra 2 cortes" o "agrega tinte a 450".
 Persona: quiero hacer un pago
-Zaldo: Yo no muevo tu dinero: yo cobro. Si quieres pagar algo aquí, te mando el cobro CoDi y lo aceptas en la app de tu banco. ¿De cuánto y por qué concepto?
-Persona: 150 de uñas (y no sabes su celular)
+Zaldo: Yo no muevo tu dinero: yo cobro. Si quieres pagar algo aquí, te mando el cobro CoDi y lo aceptas en la app de tu banco. ¿De cuánto?
+Persona: 150 (y no sabes su celular)
 Zaldo: Va. ¿A qué celular te mando la notificación? Son 10 dígitos, el que usas en la app de tu banco.
 Persona: qué es un perro?
 Zaldo: De perros no sé, de cobrar sí 🐶. Mejor dime qué vendiste y te armo el cobro.
 Persona: para qué fuiste creado?
-Zaldo: Soy tu punto de venta en WhatsApp. Guardo tu catálogo, armo el ticket, cobro con CoDi por QR, notificación o link, te aviso cuando cae el pago y te doy el corte de caja. Sin terminal ni app extra.
+Zaldo: Soy tu punto de venta en WhatsApp. Cobro con CoDi por QR, notificación al celular o link, te aviso cuando cae el pago y te llevo el corte de caja, el catálogo y el fiado. Sin terminal ni app extra.
 Persona: cobra un tinte (y no está en el catálogo)
 Zaldo: No tengo "tinte" en tu catálogo. ¿A cuánto lo cobro? Si quieres lo dejo guardado para la próxima.`;
 
@@ -119,7 +137,7 @@ const TOOLS = [
     function: {
       name: "prepare_charge",
       description:
-        "Arma una venta y prepara su cobro CoDi. No lo envía: la persona lo confirma en la tarjeta. Con items del catálogo la caja pone precios y total; sin items hacen falta amount y concept.",
+        "Prepara un cobro CoDi. No lo envía: la persona lo confirma en la tarjeta. Basta el monto (amount); el concepto es opcional. Con items del catálogo la caja pone precios y total.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -141,8 +159,8 @@ const TOOLS = [
               },
             },
           },
-          amount: { type: "number", description: "Monto en pesos, solo para un cobro suelto sin items." },
-          concept: { type: "string", description: "Concepto que verá quien paga. Con items se arma solo." },
+          amount: { type: "number", description: "Monto en pesos, para un cobro sin items." },
+          concept: { type: "string", description: "Concepto que verá quien paga. Opcional: solo si lo dijeron." },
           payerName: {
             type: "string",
             description: 'Quién paga: el nombre del cliente, "yo" si paga la persona del chat, o vacío si no se sabe (QR).',
@@ -154,6 +172,21 @@ const TOOLS = [
             description:
               "push: notificación al celular de quien paga. qr: código para escanear. link: liga de pago (CoDi o tarjeta).",
           },
+          tip: { type: "boolean", description: "Solo con link: deja que quien paga agregue propina." },
+          fixed: {
+            type: "boolean",
+            description: "QR fijo para el mostrador: no vence y recibe muchos pagos, cada uno cae como venta.",
+          },
+          openAmount: {
+            type: "boolean",
+            description: "QR sin monto: quien paga escribe la cantidad en la app de su banco. No mandes amount.",
+          },
+          every: {
+            type: "string",
+            enum: ["semanal", "quincenal", "mensual"],
+            description:
+              "Cobro recurrente: tras confirmarlo, se le manda solo al mismo cliente cada semana, quincena o mes. Necesita el celular del cliente.",
+          },
         },
       },
     },
@@ -162,12 +195,16 @@ const TOOLS = [
     type: "function",
     function: {
       name: "repeat_charge",
-      description: "Prepara otra vez el último cobro, o el último de un cliente. También pide confirmación.",
+      description:
+        "Prepara otra vez el último cobro, o el último de un cliente; con toName lo manda a otra persona. También pide confirmación.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           payerName: { type: "string", description: "Nombre, si hay que repetir el de ese cliente." },
+          toName: { type: "string", description: 'Si el mismo cobro va para OTRA persona ("lo mismo a Luis").' },
+          toPhone: { type: "string", description: "Celular de 10 dígitos de esa otra persona, si lo dijeron." },
+          method: { type: "string", enum: ["push", "qr", "link"], description: "Solo si piden cambiar la forma de cobro." },
         },
       },
     },
@@ -175,8 +212,86 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "list_recurring",
+      description: "Muestra los cobros recurrentes: a quién, cuánto, cada cuándo y cuándo toca el siguiente.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cancel_recurring",
+      description: "Detiene el cobro recurrente de un cliente. Ya no se le manda nada más.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["payerName"],
+        properties: {
+          payerName: { type: "string", description: "El cliente del cobro recurrente." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "pey_payments",
+      description: "Los últimos pagos que pey registró de verdad para esta cuenta, con su comisión.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "account_status",
+      description: "A qué cuenta cae el dinero, si ya está activa en CoDi, si hay modo de prueba y el tope del día.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remember",
+      description: "Guarda algo que la persona quiere que recuerdes siempre: horarios, costumbres, cómo prefiere cobrar.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["fact"],
+        properties: {
+          fact: { type: "string", description: "El dato, en una frase corta y completa." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "forget",
+      description: "Olvida algo que estaba guardado con remember.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["fact"],
+        properties: {
+          fact: { type: "string", description: "Palabras del dato que hay que olvidar." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_help",
+      description: "Muestra todo lo que Zaldo sabe hacer, con ejemplos.",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "charge_status",
-      description: "Estado de los cobros CoDi: pendiente, pagado o vencido.",
+      description:
+        "Estado de los cobros CoDi: pendiente, pagado o vencido. Le pregunta a pey en ese momento, así que es el estado real.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -307,7 +422,7 @@ const TOOLS = [
         type: "object",
         additionalProperties: false,
         properties: {
-          period: { type: "string", enum: ["hoy", "semana", "mes", "mes_pasado"] },
+          period: { type: "string", enum: ["hoy", "ayer", "semana", "mes", "mes_pasado"] },
         },
       },
     },
@@ -393,6 +508,19 @@ function contextBlock(store: Store, owner: string, config: AppConfig, now: numbe
   const first = store.recentTurns(owner).length <= 1 && !profile.name;
   const fiado = debtsByPerson(openDebts(store, owner, "deuda"));
   const goal = goalLine(store, owner, now);
+  const facts = (profile.facts ?? []).join(" · ");
+  // Los últimos cobros, para que "el de Ana", "el último" o "ese" tengan a qué referirse.
+  const lastCharges = store
+    .listCharges(owner)
+    .filter((charge) => charge.status !== "cancelled")
+    .slice(-5)
+    .map((charge) => `${chargeLabel(charge)} ${formatMxn(charge.amountCents)} ${charge.concept} (${STATUS_LABEL[charge.status]})`)
+    .join("; ");
+  const recurring = store
+    .listRecurrings(owner)
+    .filter((plan) => plan.active)
+    .map((plan) => `${plan.payerName} ${formatMxn(plan.amountCents)} ${frequencyLabel(plan.every)}, siguiente ${shortDate(plan.nextAt)}`)
+    .join("; ");
   return [
     "CONTEXTO",
     `Hoy: ${date} (hora de Ciudad de México).`,
@@ -407,14 +535,28 @@ function contextBlock(store: Store, owner: string, config: AppConfig, now: numbe
       : "",
     goal ? `Meta del día: ${goal}.` : "",
     fiado ? `Fiado: ${fiado}.` : "",
+    lastCharges ? `Últimos cobros (del más viejo al más nuevo): ${lastCharges}.` : "",
+    recurring ? `Cobros recurrentes activos: ${recurring}.` : "",
+    facts ? `Lo que te pidió recordar: ${facts}.` : "",
   ]
     .filter(Boolean)
     .join("\n");
 }
 
+/** Cómo se le dice a quien paga un cobro: Ana, Tú, o QR si es abierto. */
+function chargeLabel(charge: Charge): string {
+  if (charge.reusable) return "QR fijo";
+  if (charge.payerName === PAYER_OPEN) return charge.method === "link" ? "Link" : "QR";
+  return charge.payerName === PAYER_SELF ? "Tú" : charge.payerName;
+}
+
 /** A quién le llega o quién paga, dicho claro para quien confirma. */
 function payerLine(charge: Charge): string {
-  if (charge.method === "qr") return "Lo paga: quien escanee el QR con la app de su banco";
+  if (charge.method === "qr") {
+    return charge.openAmount
+      ? "Lo paga: quien escanee el QR; escribe el monto en la app de su banco"
+      : "Lo paga: quien escanee el QR con la app de su banco";
+  }
   if (charge.method === "link") return "Lo paga: quien abra el link (CoDi o tarjeta)";
   const phone = charge.payerPhone ? prettyPhone(charge.payerPhone) : "";
   if (charge.payerName === PAYER_SELF) return `Le llega a: tu celular ${phone}, en la app de tu banco`;
@@ -423,21 +565,37 @@ function payerLine(charge: Charge): string {
 
 const TEST_NOTE = "Modo de prueba: el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve.";
 
-export function chargeCard(charge: Charge, testMode = false): string {
+/** El concepto que lleva un cobro cuando la persona no dijo ninguno. */
+export const DEFAULT_CONCEPT = "Cobro";
+
+export function chargeCard(charge: Charge, testMode = false, now = charge.createdAt): string {
   const via =
-    charge.method === "push" ? "notificación CoDi" : charge.method === "qr" ? "QR CoDi" : "link de pago";
+    charge.method === "push"
+      ? "notificación CoDi"
+      : charge.method === "qr"
+        ? charge.reusable
+          ? "QR CoDi fijo (no vence y recibe varios pagos)"
+          : "QR CoDi"
+        : charge.tip
+          ? "link de pago, con opción de propina"
+          : "link de pago";
   const detail = charge.items?.length
     ? charge.items.map((item) =>
         item.qty > 1
           ? `${item.qty} × ${item.name} · ${formatMxn(item.unitCents)} c/u`
           : `1 × ${item.name} · ${formatMxn(item.unitCents)}`,
       )
-    : [`Concepto: ${charge.concept}`];
+    : charge.concept === DEFAULT_CONCEPT
+      ? []
+      : [`Concepto: ${charge.concept}`];
   return [
-    `Cobro por ${formatMxn(charge.amountCents)}`,
+    charge.openAmount ? "Cobro con monto abierto" : `Cobro por ${formatMxn(charge.amountCents)}`,
     ...detail,
     payerLine(charge),
     `Por: ${via}`,
+    ...(charge.repeat
+      ? [`Se repite: ${frequencyLabel(charge.repeat)}, solo. El siguiente, el ${shortDate(nextOccurrence(now, charge.repeat))}.`]
+      : []),
     ...(testMode ? [TEST_NOTE] : []),
   ].join("\n");
 }
@@ -466,7 +624,37 @@ const FINAL_TOOLS = new Set([
   "settle_debt",
   "get_balance",
   "undo_last",
+  "list_recurring",
+  "cancel_recurring",
+  "pey_payments",
+  "account_status",
+  "remember",
+  "forget",
+  "show_help",
 ]);
+
+/** Lo que el agente puede preguntarle a pey en vivo. Lo conecta flows.ts. */
+export interface AgentServices {
+  /** Vuelve a consultar en pey los cobros abiertos de esta persona. */
+  refresh?: (owner: string) => Promise<void>;
+  /** Los pagos que pey registró para esta llave, lo más nuevo primero. */
+  payments?: () => Promise<PeyTransaction[]>;
+  /** La cuenta que recibe los cobros, si se registró por API. */
+  account?: () => Promise<PeyBankAccount | null>;
+}
+
+const HELP = [
+  "Esto hago por ti:",
+  '· Cobrar con CoDi: "cobra 150", "cóbrale 200 a Ana 5512345678", "link de 500 con propina"',
+  '· Cobros que se repiten solos: "cóbrale 500 a Ana cada mes"',
+  '· QR para tu mostrador: "hazme un QR fijo de 50" o "un QR abierto"',
+  '· Saber si pagaron: "¿ya pagó Ana?", "mis últimos pagos"',
+  '· Catálogo: "agrega corte a 150" y luego "cobra 2 cortes"',
+  '· Caja: "corte", "gasté 300 en insumos", "me pagaron 200 en efectivo"',
+  '· Fiado: "Ana me quedó a deber 300", "cóbrale a Ana lo que debe"',
+  '· Memoria: "recuerda que cierro a las 8"',
+  "Escríbeme o mándame nota de voz, como te salga.",
+].join("\n");
 
 /** El modelo dice que apuntó, guardó o borró algo. Solo vale si de verdad llamó a la herramienta. */
 const CLAIMS_ACTION =
@@ -597,19 +785,40 @@ export function prepareCharge(
   if (ticket && "error" in ticket) {
     return { output: ticket.direct ? `${DIRECT}${ticket.error}` : fail(ticket.error) };
   }
-  let amount = ticket ? ticket.totalCents : parsePesosToCents(raw.amount);
-  if (!ticket && verify && (amount === null || !knownAmount(store, owner, amount))) {
+  const openAmount = raw.openAmount === true && !ticket;
+  const fixed = raw.fixed === true;
+  const tip = raw.tip === true;
+  const every = normalizeFrequency(raw.every);
+  if (every && (fixed || openAmount)) {
+    return { output: fail("un cobro recurrente va por notificación al celular del cliente, no por QR fijo. Elige uno.") };
+  }
+  if (openAmount && config.testMaxCents) {
+    return {
+      output: `${DIRECT}En modo de prueba no hago QR de monto abierto: no podría topar lo que te paguen, y ese dinero no se devuelve. Sí te hago un QR fijo de hasta ${formatMxn(config.testMaxCents)}.`,
+    };
+  }
+  // Más de un millón no se cobra por CoDi: se dice de una vez, sin pedir el monto otra vez.
+  const asNumber = typeof raw.amount === "number" ? raw.amount : Number(String(raw.amount ?? "").replace(/[$,\s]/g, ""));
+  if (!openAmount && !ticket && Number.isFinite(asNumber) && asNumber > 1_000_000) {
+    return {
+      output: `${DIRECT}Ese monto no lo puedo cobrar: CoDi acepta hasta $1,000,000.00 por cobro. ¿De cuánto lo hago?`,
+    };
+  }
+  let amount = openAmount ? 0 : ticket ? ticket.totalCents : parsePesosToCents(raw.amount);
+  if (!openAmount && !ticket && verify && (amount === null || !knownAmount(store, owner, amount))) {
     // El modelo mandó una cifra que nadie dijo ("0.01" convertido en 1). Si la
     // persona escribió un solo monto, ese es; si no, la caja lo pregunta.
     amount = spokenMoney(store, owner);
     if (amount === null) {
       return {
-        output: `${DIRECT}Me falta el monto. ¿De cuánto es el cobro? Escríbemelo en números, por ejemplo: "cobra 150 de uñas".`,
+        output: `${DIRECT}Me falta el monto. ¿De cuánto es el cobro? Escríbemelo en números, por ejemplo: "cobra 150".`,
       };
     }
   }
   if (amount === null || amount > 100_000_000) {
-    return { output: fail("el monto tiene que ser en pesos, mayor a cero y de máximo $1,000,000.00.") };
+    return {
+      output: `${DIRECT}Ese monto no lo puedo cobrar: tiene que ser en pesos, mayor a cero y de máximo $1,000,000.00. ¿De cuánto lo hago?`,
+    };
   }
   if (config.testMaxCents && amount > config.testMaxCents) {
     return {
@@ -621,7 +830,8 @@ export function prepareCharge(
     const text = itemsText(ticket.items);
     concept = text.length <= 80 ? text : `${ticket.items.reduce((n, item) => n + item.qty, 0)} productos`;
   }
-  if (!concept) return { output: fail("falta el concepto, de hasta 80 caracteres.") };
+  // Se puede cobrar sin decir por qué: el concepto es opcional.
+  if (!concept) concept = DEFAULT_CONCEPT;
 
   let name = nameOf(raw.payerName);
   if (name.length > 40) return { output: fail("el nombre es demasiado largo.") };
@@ -645,9 +855,17 @@ export function prepareCharge(
 
   const asked = raw.method;
   let method: ChargeMethod;
-  if (asked === "qr" || asked === "link" || (asked === "push" && !demoted)) method = asked;
+  if (fixed || openAmount) method = "qr";
+  else if (every) method = "push";
+  else if (tip) method = "link";
+  else if (asked === "qr" || asked === "link" || (asked === "push" && !demoted)) method = asked;
   else method = phone || name ? "push" : "qr";
 
+  if (every && !phone) {
+    return {
+      output: `${DIRECT}Para un cobro recurrente necesito el celular del cliente, porque cada periodo le llega la notificación a su banco. ¿A quién se lo cobro y cuál es su número de 10 dígitos?`,
+    };
+  }
   if (method === "link" && !config.publicBaseUrl) {
     return { output: fail("el link de pago todavía no está disponible. Ofrece notificación CoDi o QR.") };
   }
@@ -666,7 +884,9 @@ export function prepareCharge(
   const used = store.confirmedCentsSince(owner, mexicoDayStart(now));
   if (used + amount > config.dailyCapCents) {
     const left = Math.max(0, config.dailyCapCents - used);
-    return { output: fail(`ese monto pasa el tope de cobros de hoy. Quedan ${formatMxn(left)}.`) };
+    return {
+      output: `${DIRECT}Ese monto pasa el tope de cobros de hoy: te quedan ${formatMxn(left)}. Mañana se reinicia.`,
+    };
   }
   if (method === "push" && phone) {
     const unpaid = store
@@ -707,7 +927,15 @@ export function prepareCharge(
     expiryNotified: false,
     paidNoticeSent: false,
     ...(ticket ? { items: ticket.items } : {}),
+    ...(fixed ? { reusable: true } : {}),
+    ...(openAmount ? { openAmount: true } : {}),
+    ...(tip && method === "link" ? { tip: true } : {}),
+    ...(every ? { repeat: every } : {}),
   };
+  // Un cobro corregido antes de confirmar ("mejor 200") reemplaza al anterior: solo queda uno por confirmar.
+  for (const stale of store.listCharges(owner)) {
+    if (stale.status === "awaiting_confirm") store.updateCharge({ ...stale, status: "cancelled" });
+  }
   store.insertCharge(charge);
   if (name !== PAYER_SELF && name !== PAYER_OPEN && phone) store.upsertContact({ owner, name, phone });
   return { output: "Cobro preparado. La tarjeta para confirmar ya sale en el chat. No digas que ya se envió.", charge };
@@ -776,15 +1004,22 @@ function execute(
         .reverse()
         .find((charge) => !name || fold(charge.payerName) === name);
       if (!previous) return { output: fail(name ? "no tengo un cobro de ese cliente." : "todavía no hay cobros.") };
+      // "Lo mismo a Luis": el mismo cobro, para otra persona.
+      const toName = nameOf(raw.toName);
+      const askedMethod = raw.method === "push" || raw.method === "qr" || raw.method === "link" ? raw.method : null;
+      const samePayer =
+        previous.payerName === PAYER_SELF ? "yo" : previous.payerName === PAYER_OPEN ? "" : previous.payerName;
       return prepareCharge(store, config, owner, now, {
-        ...(previous.items?.length
-          ? { items: previous.items.map((item) => ({ name: item.name, qty: item.qty, price: item.unitCents / 100 })) }
-          : { amount: (previous.amountCents / 100).toFixed(2) }),
+        ...(previous.openAmount
+          ? { openAmount: true }
+          : previous.items?.length
+            ? { items: previous.items.map((item) => ({ name: item.name, qty: item.qty, price: item.unitCents / 100 })) }
+            : { amount: (previous.amountCents / 100).toFixed(2) }),
         concept: previous.concept,
-        payerName:
-          previous.payerName === PAYER_SELF ? "yo" : previous.payerName === PAYER_OPEN ? "" : previous.payerName,
-        payerPhone: previous.payerPhone ?? undefined,
-        method: previous.method,
+        payerName: toName || samePayer,
+        payerPhone: toName ? (typeof raw.toPhone === "string" ? raw.toPhone : undefined) : (previous.payerPhone ?? undefined),
+        method: askedMethod ?? (toName && previous.method !== "link" ? "push" : previous.method),
+        tip: previous.tip === true,
       });
     }
     case "charge_status": {
@@ -798,12 +1033,59 @@ function execute(
         output: charges
           .slice(-6)
           .map((charge) => {
-            const who = charge.payerName === PAYER_OPEN ? "QR" : charge.payerName === PAYER_SELF ? "Tú" : charge.payerName;
-            return `${who}: ${formatMxn(charge.amountCents)} · ${charge.concept} · ${STATUS_LABEL[charge.status]}`;
+            const amount = charge.openAmount && charge.status !== "paid" ? "monto abierto" : formatMxn(charge.amountCents);
+            const state = charge.reusable && charge.status === "pending" ? "activo" : STATUS_LABEL[charge.status];
+            return `${chargeLabel(charge)}: ${amount} · ${charge.concept} · ${state}`;
           })
           .join("\n"),
       };
     }
+    case "list_recurring": {
+      const plans = store.listRecurrings(owner).filter((plan) => plan.active);
+      if (!plans.length) {
+        return { output: 'No tienes cobros recurrentes. Dime, por ejemplo: "cóbrale 500 a Ana cada mes".' };
+      }
+      return {
+        output: [
+          "Tus cobros recurrentes",
+          ...plans.map(
+            (plan) =>
+              `${plan.payerName} · ${formatMxn(plan.amountCents)} ${frequencyLabel(plan.every)} · ${plan.concept} · siguiente ${shortDate(plan.nextAt)}`,
+          ),
+        ].join("\n"),
+      };
+    }
+    case "cancel_recurring": {
+      const who = fold(nameOf(raw.payerName));
+      const plans = store.listRecurrings(owner).filter((plan) => plan.active && (!who || fold(plan.payerName) === who));
+      if (!who || !plans.length) return { output: fail("no hay un cobro recurrente activo con ese cliente.") };
+      for (const plan of plans) store.upsertRecurring({ ...plan, active: false });
+      return {
+        output: plans
+          .map((plan) => `Listo: ya no le cobro a ${plan.payerName} ${frequencyLabel(plan.every)} (${formatMxn(plan.amountCents)} · ${plan.concept}).`)
+          .join("\n"),
+      };
+    }
+    case "remember": {
+      const fact = nameOf(raw.fact).slice(0, 140);
+      if (fact.length < 3) return { output: fail("falta lo que hay que recordar.") };
+      const profile = store.getProfile(owner);
+      const facts = (profile.facts ?? []).filter((item) => fold(item) !== fold(fact));
+      // Caben veinte: el más viejo sale para que entre el nuevo.
+      store.setProfile({ ...profile, facts: [...facts, fact].slice(-20) });
+      return { output: `Anotado, no se me olvida: "${fact}".` };
+    }
+    case "forget": {
+      const query = fold(nameOf(raw.fact));
+      const profile = store.getProfile(owner);
+      const facts = profile.facts ?? [];
+      const gone = query.length >= 3 ? facts.filter((item) => fold(item).includes(query) || query.includes(fold(item))) : [];
+      if (!gone.length) return { output: fail("no tengo guardado nada parecido.") };
+      store.setProfile({ ...profile, facts: facts.filter((item) => !gone.includes(item)) });
+      return { output: gone.map((item) => `Olvidado: "${item}".`).join("\n") };
+    }
+    case "show_help":
+      return { output: HELP };
     case "set_product": {
       const name = nameOf(raw.name);
       if (!name || name.length > 40) return { output: fail("falta el nombre del producto, de hasta 40 caracteres.") };
@@ -914,6 +1196,91 @@ function execute(
   }
 }
 
+const VIA: Record<string, string> = { API_CODI_QR: "QR", API_CODI_PN: "notificación", PAYMENT_LINK: "link" };
+
+/** Lo que pey registró de verdad: fecha, monto, por dónde entró y su comisión. */
+async function paymentsText(services: AgentServices): Promise<string> {
+  if (!services.payments) return fail("desde aquí no puedo consultar los pagos en pey.");
+  let items: PeyTransaction[];
+  try {
+    items = await services.payments();
+  } catch {
+    return `${DIRECT}pey no me contestó ahorita. Pregúntame otra vez en un minuto.`;
+  }
+  const paid = items.filter((tx) => tx.status === "PAID").slice(0, 8);
+  if (!paid.length) return "pey todavía no registra pagos recibidos en esta cuenta.";
+  const lines = paid.map((tx) => {
+    const fee = tx.breakdown?.feeCents ? ` (comisión ${formatMxn(tx.breakdown.feeCents)})` : "";
+    const tip = tx.breakdown?.tipCents ? ` (propina ${formatMxn(tx.breakdown.tipCents)})` : "";
+    const via = tx.payableType ? (VIA[tx.payableType] ?? "CoDi") : "CoDi";
+    const what = tx.description ? ` · ${tx.description.slice(0, 40)}` : "";
+    return `${shortDateTime(tx.datePaid ?? tx.dateCreated ?? 0)} · ${formatMxn(tx.amountCents)} · ${via}${what}${tip}${fee}`;
+  });
+  const total = paid.reduce((sum, tx) => sum + tx.amountCents, 0);
+  return ["Últimos pagos según pey", ...lines, `Suman ${formatMxn(total)} en ${paid.length} ${paid.length === 1 ? "pago" : "pagos"}.`].join("\n");
+}
+
+/** A dónde cae el dinero y en qué estado está esa cuenta. */
+async function accountText(
+  store: Store,
+  config: AppConfig,
+  owner: string,
+  now: number,
+  services: AgentServices,
+): Promise<string> {
+  const lines: string[] = [];
+  if (config.peyBankAccountId) {
+    let account: PeyBankAccount | null = null;
+    try {
+      account = (await services.account?.()) ?? null;
+    } catch {
+      /* pey no contestó: se dice lo que se sabe */
+    }
+    const state =
+      account?.codiStatus === "ACTIVE"
+        ? "activa en CoDi"
+        : account?.codiStatus === "ERROR"
+          ? `con error en CoDi${account.errorMessage ? `: ${account.errorMessage}` : ""}`
+          : account?.codiStatus
+            ? "en activación con Banxico (hasta 5 días hábiles)"
+            : "no pude leer su estado en pey";
+    const which = account?.clabeLast4 ? `la cuenta con CLABE terminada en ${account.clabeLast4}` : "la cuenta registrada en pey";
+    lines.push(`Los cobros caen en ${which}: ${state}.`);
+  } else lines.push("Los cobros caen en la cuenta CoDi ligada a la llave de pey del negocio.");
+  if (config.testMaxCents) {
+    lines.push(
+      `Estás en modo de prueba: máximo ${formatMxn(config.testMaxCents)} por cobro. Ese dinero va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve.`,
+    );
+  }
+  const left = Math.max(0, config.dailyCapCents - store.confirmedCentsSince(owner, mexicoDayStart(now)));
+  lines.push(`Tope de cobros de hoy: te quedan ${formatMxn(left)} de ${formatMxn(config.dailyCapCents)}.`);
+  return lines.join("\n");
+}
+
+/** Las herramientas que hablan con pey esperan su respuesta; el resto es el libro. */
+async function run(
+  store: Store,
+  config: AppConfig,
+  owner: string,
+  now: number,
+  call: ToolCall,
+  already: boolean,
+  services: AgentServices,
+): Promise<{ output: string; charge?: Charge }> {
+  const name = call.function.name;
+  if (name === "pey_payments") return { output: await paymentsText(services) };
+  if (name === "account_status") return { output: await accountText(store, config, owner, now, services) };
+  if (name === "charge_status") {
+    // "¿Ya pagó?" se contesta con lo que diga pey ahora, no con lo último que supimos.
+    try {
+      await services.refresh?.(owner);
+    } catch {
+      /* sin pey, el estado del libro */
+    }
+  }
+  return execute(store, config, owner, now, call, already);
+}
+
 /**
  * La conversación como la ve el modelo. Los turnos donde usó herramientas se
  * reconstruyen como llamadas de verdad: si solo viera el texto final,
@@ -947,6 +1314,8 @@ export async function runAgent(input: {
   owner: string;
   now: number;
   complete: Completer;
+  /** Consultas en vivo a pey. Sin ellas, el agente contesta con lo que hay en el libro. */
+  services?: AgentServices;
 }): Promise<{ charge: Charge | null; reply: string | null; tools: TurnTool[] }> {
   const messages: ChatMessage[] = [
     {
@@ -992,7 +1361,15 @@ export async function runAgent(input: {
     const outputs: string[] = [];
     let final = true;
     for (const call of result.toolCalls) {
-      const done = execute(input.store, input.config, input.owner, input.now, call, charge !== null);
+      const done = await run(
+        input.store,
+        input.config,
+        input.owner,
+        input.now,
+        call,
+        charge !== null,
+        input.services ?? {},
+      );
       if (done.charge) charge = done.charge;
       messages.push({ role: "tool", tool_call_id: call.id, content: done.output });
       tools.push({ name: call.function.name, args: call.function.arguments, output: done.output });

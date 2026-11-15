@@ -36,6 +36,46 @@ export interface Charge {
   paidNoticeSent: boolean;
   /** El ticket, cuando la venta salió del catálogo. */
   items?: ChargeItem[];
+  /**
+   * QR fijo del mostrador: no vence y recibe muchos pagos. Se queda abierto y
+   * cada pago queda como una venta aparte (parentId apunta a este QR).
+   */
+  reusable?: boolean;
+  /** QR sin monto: quien paga escribe la cantidad en la app de su banco. */
+  openAmount?: boolean;
+  /** Pagos de pey ya contados en este QR fijo, para no contar uno dos veces. */
+  seenTransactions?: string[];
+  parentId?: string;
+  /** Link de pago que deja agregar propina, y la propina que llegó. */
+  tip?: boolean;
+  tipCents?: number;
+  /** Al confirmarlo queda como cobro recurrente con esta frecuencia. */
+  repeat?: Frequency;
+  /** El cobro recurrente que lo mandó, si salió solo. */
+  recurringId?: string;
+}
+
+export type Frequency = "semanal" | "quincenal" | "mensual";
+
+/**
+ * Un cobro que se repite solo: cada periodo Zaldo le manda la notificación
+ * CoDi al mismo cliente, sin volver a pedir confirmación.
+ */
+export interface Recurring {
+  id: string;
+  owner: string;
+  payerName: string;
+  payerPhone: string;
+  amountCents: number;
+  concept: string;
+  every: Frequency;
+  /** Cuándo toca el siguiente, en milisegundos. */
+  nextAt: number;
+  active: boolean;
+  createdAt: number;
+  lastChargeId: string | null;
+  /** Cobros seguidos sin pagar. A los tres se pausa solo. */
+  missed: number;
 }
 
 /**
@@ -74,6 +114,8 @@ export interface Profile {
   business?: string | null;
   /** Meta de venta diaria. */
   dailyGoalCents?: number | null;
+  /** Lo que la persona pidió recordar: horarios, costumbres, cómo le gusta cobrar. */
+  facts?: string[];
 }
 
 export interface Contact {
@@ -104,11 +146,15 @@ interface Data {
   claims: Record<string, "open" | "done">;
   products: Product[];
   profiles: Profile[];
+  recurrings: Recurring[];
 }
 
 function empty(): Data {
-  return { charges: [], notes: [], contacts: [], turns: {}, claims: {}, products: [], profiles: [] };
+  return { charges: [], notes: [], contacts: [], turns: {}, claims: {}, products: [], profiles: [], recurrings: [] };
 }
+
+/** Mensajes de la conversación que se conservan por persona. Lo duradero vive en el libro, no aquí. */
+const TURNS_KEPT = 30;
 
 export class Store {
   private tail: Promise<unknown> = Promise.resolve();
@@ -196,6 +242,9 @@ export class Store {
         (item) =>
           item.owner === owner &&
           item.createdAt >= since &&
+          // Un QR abierto no tiene monto, y sus pagos los decide el cliente: no gastan el tope.
+          !item.openAmount &&
+          !item.parentId &&
           (item.status === "pending" || item.status === "paid"),
       )
       .reduce((sum, item) => sum + item.amountCents, 0);
@@ -254,6 +303,17 @@ export class Store {
     return close.length === 1 ? (close[0] ?? null) : null;
   }
 
+  listRecurrings(owner?: string): Recurring[] {
+    return this.data.recurrings.filter((item) => !owner || item.owner === owner);
+  }
+
+  upsertRecurring(plan: Recurring): void {
+    const index = this.data.recurrings.findIndex((item) => item.id === plan.id);
+    if (index === -1) this.data.recurrings.push(plan);
+    else this.data.recurrings[index] = plan;
+    this.save();
+  }
+
   getProfile(owner: string): Profile {
     return this.data.profiles.find((item) => item.owner === owner) ?? { owner, name: null, phone: null };
   }
@@ -290,7 +350,7 @@ export class Store {
   appendTurn(owner: string, turn: Turn): void {
     const list = this.data.turns[owner] ?? [];
     list.push(turn);
-    this.data.turns[owner] = list.slice(-24);
+    this.data.turns[owner] = list.slice(-TURNS_KEPT);
     this.save();
   }
 

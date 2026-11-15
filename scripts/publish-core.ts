@@ -77,9 +77,11 @@ if (args.includes("--status")) await call("GET");
 else if (args.includes("--rollback")) await call("DELETE");
 else {
   if (!args.includes("--no-test")) {
-    const tests = spawnSync("npm test", { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"], shell: true });
+    // Con límite: unos tests colgados no deben dejar colgada la publicación.
+    const tests = spawnSync("npm test", { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"], shell: true, timeout: 180_000 });
     if (tests.status !== 0) {
-      console.error("✗ Los tests no pasan: no se publica. Corre npm test para ver cuál.");
+      const why = tests.error ? "se pasaron de 3 minutos" : "no pasan";
+      console.error(`✗ Los tests ${why}: no se publica. Corre npm test para ver cuál.`);
       process.exit(1);
     }
     console.log("✓ Tests");

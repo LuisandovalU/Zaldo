@@ -21,6 +21,7 @@ import {
   handleInbound,
   reconcilePending,
   releaseInbound,
+  runRecurring,
   takeExpired,
   type FlowDeps,
 } from "./flows.js";
@@ -157,6 +158,8 @@ export function createZaldo(host: CoreHost): ZaldoCore {
           if (current) store.updateCharge({ ...current, paidNoticeSent: true });
         }
         for (const notice of takeExpired(store, Date.now())) enqueue(notice.owner, notice.text);
+        // Los cobros recurrentes que ya tocan salen solos, y se le avisa a quien cobra.
+        for (const notice of await runRecurring(flows)) enqueue(notice.owner, notice.text);
       } catch (error) {
         console.error("zaldo reloj", error instanceof Error ? error.message : error);
       }

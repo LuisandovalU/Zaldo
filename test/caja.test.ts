@@ -21,6 +21,12 @@ import type { Outbound } from "../src/inbound.js";
 import { PeyClient, PeyError } from "../src/pey.js";
 import { memoryStore, type Store } from "../src/store.js";
 
+
+/** Como assert.ok(x.startsWith(y)), pero al fallar enseña lo que llegó (y no se cuelga bajo tsx). */
+function starts(actual: string, prefix: string): void {
+  assert.equal(actual.slice(0, prefix.length), prefix);
+}
+
 const OWNER = "5215511111111";
 /** Un chat que WhatsApp entrega sin número (LID): Zaldo no sabe su celular. */
 const LID = "198765432109876";
@@ -609,7 +615,7 @@ test("las cifras salen del libro, no del modelo", async () => {
     return { content: null, toolCalls: [call("prepare_charge", { amount: 0.01, concept: "prueba" })] };
   };
   const cent = await say(deps, OWNER, refuser, "dame un QR de 0.01 de prueba");
-  assert.ok(textOf(cent).startsWith("Cobro por $0.01"));
+  starts(textOf(cent), "Cobro por $0.01");
   assert.equal(asked, 2);
 
   // Explicar que cobra y no paga no cuenta como negarse.
@@ -637,30 +643,30 @@ test("un cobro nunca lleva un monto que nadie dijo", async () => {
 
   // "cobra una gringa" sin catálogo: el modelo inventa $60. No pasa.
   const invented = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 60, concept: "gringa" }]), "cobra una gringa"));
-  assert.ok(invented.startsWith("Me falta el monto. ¿De cuánto es el cobro?"));
+  starts(invented, "Me falta el monto. ¿De cuánto es el cobro?");
   const inventedItem = textOf(await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "gringa", price: 60 }] }]), "cobra una gringa"));
-  assert.ok(inventedItem.startsWith('No tengo "gringa" en tu catálogo. ¿A cuánto lo cobro?'));
+  starts(inventedItem, 'No tengo "gringa" en tu catálogo. ¿A cuánto lo cobro?');
   const guessed = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 130, concept: "2 gringas" }]), "cobra dos gringas"));
-  assert.ok(guessed.startsWith("Me falta el monto."));
+  starts(guessed, "Me falta el monto.");
   assert.equal(store.listCharges(OWNER).length, 0);
 
   // Si el modelo cambia la cifra que la persona escribió, manda la de la persona.
   const cent = await say(deps, OWNER, calls(["prepare_charge", { amount: 1, concept: "prueba" }]), "dame un QR de 0.01 de prueba");
-  assert.ok(textOf(cent).startsWith("Cobro por $0.01"));
+  starts(textOf(cent), "Cobro por $0.01");
   const pesos = await say(deps, OWNER, calls(["prepare_charge", { amount: 1500, concept: "uñas" }]), "cobra 150 pesos de uñas");
-  assert.ok(textOf(pesos).startsWith("Cobro por $150.00"));
+  starts(textOf(pesos), "Cobro por $150.00");
   const dollar = await say(deps, OWNER, calls(["prepare_charge", { concept: "corte" }]), "cobra $80 de un corte");
-  assert.ok(textOf(dollar).startsWith("Cobro por $80.00"));
+  starts(textOf(dollar), "Cobro por $80.00");
   // "1 centavo" es un centavo aunque el modelo mande un peso, o lo mande bien.
   const oneCent = await say(deps, OWNER, calls(["prepare_charge", { amount: 1, concept: "prueba" }]), "cobra 1 centavo de prueba");
-  assert.ok(textOf(oneCent).startsWith("Cobro por $0.01"));
+  starts(textOf(oneCent), "Cobro por $0.01");
   const fifty = await say(deps, OWNER, calls(["prepare_charge", { amount: 0.5, concept: "chicle" }]), "cobra 50 centavos de un chicle");
-  assert.ok(textOf(fifty).startsWith("Cobro por $0.50"));
+  starts(textOf(fifty), "Cobro por $0.50");
   // Con dos montos en el mensaje no se adivina cuál; una cantidad suelta ("3 tintes") no es dinero.
   const two = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 999, concept: "varios" }]), "cobra 150 pesos y 300 pesos"));
-  assert.ok(two.startsWith("Me falta el monto."));
+  starts(two, "Me falta el monto.");
   const qty = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 1350, concept: "3 tintes" }]), "cobra 3 tintes"));
-  assert.ok(qty.startsWith("Me falta el monto."));
+  starts(qty, "Me falta el monto.");
   assert.equal(store.listCharges(OWNER).length, 5);
 
   // En cuanto la persona lo dice, sí: suelto, por pieza o con formato.
@@ -682,7 +688,7 @@ test("un cobro nunca lleva un monto que nadie dijo", async () => {
   const debt = await say(otherDeps, OWNER, calls(["prepare_charge", { amount: 350, concept: "uñas", payerName: "Lupita", payerPhone: "5522223333" }]), "cóbrale a Lupita lo que me debe, su cel es 5522223333");
   assert.match(textOf(debt), /Cobro por \$350\.00/);
   const wrong = textOf(await say(otherDeps, OWNER, calls(["prepare_charge", { amount: 400, concept: "uñas", payerName: "Lupita" }]), "cóbrale a Lupita lo que me debe"));
-  assert.ok(wrong.startsWith("Me falta el monto."));
+  starts(wrong, "Me falta el monto.");
 
   // "Cobra un corte" es una venta a un cliente: aunque el modelo diga "yo", sale QR.
   const shop = memoryStore();
@@ -732,15 +738,15 @@ test("modo de prueba: la cuenta de pruebas de pey y su tope", async () => {
     }),
   );
   assert.equal(asked, 1);
-  assert.ok(big.startsWith("Esta caja está en modo de prueba: por ahora cobro máximo $1.00 por cobro"));
+  starts(big, "Esta caja está en modo de prueba: por ahora cobro máximo $1.00 por cobro");
   assert.equal(store.listCharges(OWNER).length, 0);
   const small = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 0.01, concept: "prueba" }])));
-  assert.ok(small.startsWith("Cobro por $0.01"));
+  starts(small, "Cobro por $0.01");
   assert.ok(small.endsWith("Modo de prueba: el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve."));
 
   // Fuera del modo de prueba, ni tope ni aviso.
   const normal = textOf(await say(flow(memoryStore(), fakePey()), OWNER, calls(["prepare_charge", { amount: 150, concept: "uñas" }])));
-  assert.ok(normal.startsWith("Cobro por $150.00"));
+  starts(normal, "Cobro por $150.00");
   assert.ok(!normal.includes("Modo de prueba"));
 });
 
@@ -805,7 +811,7 @@ test("el modelo recuerda sus herramientas como llamadas, no como texto", async (
   ]);
   // El "Apuntado" vive en el resultado de la herramienta, nunca como texto del asistente.
   const assistantTexts = seen.filter((message) => message.role === "assistant" && message.content).map((message) => message.content ?? "");
-  assert.ok(assistantTexts.every((text) => !text.startsWith("Apuntado")));
+  assert.equal(assistantTexts.filter((text) => text.startsWith("Apuntado")).length, 0);
   const toolIds = seen.filter((message) => message.role === "tool").map((message) => message.tool_call_id);
   const callIds = seen.flatMap((message) => message.tool_calls?.map((item) => item.id) ?? []);
   assert.deepEqual(toolIds, callIds);

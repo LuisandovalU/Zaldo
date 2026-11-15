@@ -11,6 +11,7 @@ import {
   handleInbound,
   reconcilePending,
   releaseInbound,
+  runRecurring,
   takeExpired,
   type FlowDeps,
 } from "./flows.js";
@@ -193,6 +194,7 @@ export function startSweeper(deps: FlowDeps, whatsapp: WhatsApp, auth?: AuthServ
         }
         const notices = takeExpired(deps.store, deps.now());
         for (const notice of notices) await whatsapp.sendText(notice.owner, notice.text);
+        for (const notice of await runRecurring(deps)) await whatsapp.sendText(notice.owner, notice.text);
       } catch (error) {
         console.error("vencidos", error instanceof Error ? error.message : error);
       }

@@ -3,7 +3,7 @@
  * Todo es aritmética sobre el libro (store); el modelo nunca escribe estas cifras.
  */
 import { formatMxn, mexicoDayStart } from "./money.js";
-import { fold, type Charge, type ChargeItem, type Note, type Store } from "./store.js";
+import { fold, type Charge, type ChargeItem, type Frequency, type Note, type Store } from "./store.js";
 
 /** Gastos de un negocio chico. Lo raro cae en "otros". */
 export const CATEGORIES = [
@@ -24,7 +24,7 @@ export function normalizeCategory(value: unknown): Category {
   return (CATEGORIES as readonly string[]).includes(key) ? (key as Category) : "otros";
 }
 
-export type Period = "hoy" | "semana" | "mes" | "mes_pasado";
+export type Period = "hoy" | "ayer" | "semana" | "mes" | "mes_pasado";
 
 const MONTHS = [
   "enero",
@@ -47,7 +47,7 @@ const OFFSET = 6 * HOUR;
 
 export function normalizePeriod(value: unknown): Period {
   const key = typeof value === "string" ? fold(value).replace(/\s+/g, "_") : "";
-  if (key === "semana" || key === "mes" || key === "mes_pasado") return key;
+  if (key === "ayer" || key === "semana" || key === "mes" || key === "mes_pasado") return key;
   return "hoy";
 }
 
@@ -57,6 +57,7 @@ export function periodRange(period: Period, now: number): { start: number; end: 
   const local = new Date(dayStart - OFFSET);
   const year = local.getUTCFullYear();
   const month = local.getUTCMonth();
+  if (period === "ayer") return { start: dayStart - DAY, end: dayStart, label: "ayer" };
   if (period === "semana") {
     const sinceMonday = (local.getUTCDay() + 6) % 7;
     return { start: dayStart - sinceMonday * DAY, end: now + 1, label: "esta semana" };
@@ -196,6 +197,8 @@ export function corteText(store: Store, owner: string, period: Period, now: numb
     }
   } else lines.push("Ventas CoDi: $0.00");
   if (cash > 0) lines.push(`Efectivo y otros: ${formatMxn(cash)}`);
+  const tips = paid.reduce((total, charge) => total + (charge.tipCents ?? 0), 0);
+  if (tips > 0) lines.push(`Propinas: ${formatMxn(tips)} (aparte de lo vendido)`);
   lines.push(`Total vendido: ${formatMxn(sold)}`);
 
   // Lo más vendido: por producto si la venta salió del catálogo, si no por concepto.
@@ -234,8 +237,9 @@ export function corteText(store: Store, owner: string, period: Period, now: numb
     const goal = goalLine(store, owner, now);
     if (goal) lines.push(`Meta del día: ${goal}`);
   }
-  if (period !== "mes_pasado") {
-    const waiting = charges.filter((charge) => charge.status === "pending");
+  if (period !== "mes_pasado" && period !== "ayer") {
+    // Un QR fijo siempre está abierto: no es un cobro que alguien deba.
+    const waiting = charges.filter((charge) => charge.status === "pending" && !charge.reusable);
     if (waiting.length) {
       const total = waiting.reduce((t, charge) => t + charge.amountCents, 0);
       lines.push(`Por cobrar: ${waiting.length} ${waiting.length === 1 ? "cobro esperando" : "cobros esperando"} pago (${formatMxn(total)})`);
@@ -248,4 +252,50 @@ export function corteText(store: Store, owner: string, period: Period, now: numb
     if (debo.length) lines.push(`Debes: ${formatMxn(debo.reduce((t, n) => t + owed(n), 0))} (${debtsByPerson(debo)})`);
   }
   return lines.join("\n");
+}
+
+const FREQUENCY_LABEL: Record<Frequency, string> = {
+  semanal: "cada semana",
+  quincenal: "cada quincena",
+  mensual: "cada mes",
+};
+
+export function frequencyLabel(every: Frequency): string {
+  return FREQUENCY_LABEL[every];
+}
+
+export function normalizeFrequency(value: unknown): Frequency | null {
+  const key = typeof value === "string" ? fold(value) : "";
+  if (key === "semanal" || key === "quincenal" || key === "mensual") return key;
+  return null;
+}
+
+/**
+ * Cuándo toca el siguiente cobro recurrente. Semanal y quincenal suman días;
+ * mensual cae el mismo día del mes siguiente (un 31 se recorre al último día).
+ */
+export function nextOccurrence(from: number, every: Frequency): number {
+  if (every === "semanal") return from + 7 * DAY;
+  if (every === "quincenal") return from + 15 * DAY;
+  const local = new Date(from - OFFSET);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth() + 1;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const day = Math.min(local.getUTCDate(), lastDay);
+  return (
+    Date.UTC(year, month, day, local.getUTCHours(), local.getUTCMinutes(), local.getUTCSeconds()) + OFFSET
+  );
+}
+
+/** "15 dic": una fecha corta en hora de México. */
+export function shortDate(at: number): string {
+  const local = new Date(at - OFFSET);
+  return `${local.getUTCDate()} ${(MONTHS[local.getUTCMonth()] ?? "").slice(0, 3)}`;
+}
+
+/** "15 dic 12:03". */
+export function shortDateTime(at: number): string {
+  const local = new Date(at - OFFSET);
+  const time = `${String(local.getUTCHours()).padStart(2, "0")}:${String(local.getUTCMinutes()).padStart(2, "0")}`;
+  return `${shortDate(at)} ${time}`;
 }
