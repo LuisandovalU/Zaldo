@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "test": "tsx --test test/zaldo.test.ts"
+    "test": "tsx --test test/zaldo.test.ts test/admin.test.ts",
+    "admin:hash": "tsx scripts/hash-password.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "openai": "^4.77.0",
