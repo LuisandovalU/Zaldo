@@ -431,6 +431,18 @@ export function createZaldo(host: CoreHost): ZaldoCore {
         const file = join(dataDir, "zaldo-qr.png");
         return existsSync(file) ? reply(200, readFileSync(file), "image/png") : reply(404, "not found");
       }
+      // Diagnóstico del puente de WhatsApp: fechas, contadores y el último tropiezo. Sin texto de nadie.
+      if (path === "/zaldo/bridge/stats") {
+        if (!bridgeOk(request)) return reply(401, "forbidden");
+        const read = (name: string): unknown => {
+          try {
+            return JSON.parse(readFileSync(join(dataDir, name), "utf8")) as unknown;
+          } catch {
+            return null;
+          }
+        };
+        return json(200, { now: Date.now(), wa: read("zaldo-wa.json"), stats: read("zaldo-wa-stats.json") });
+      }
       if (path === "/zaldo/bridge/outbox") {
         if (!bridgeOk(request)) return reply(401, "forbidden");
         const items = outbox.splice(0, outbox.length);
