@@ -36,7 +36,7 @@ const NOT_A_NAME = new Set([
  */
 export function spokenPayer(texts: string[]): string | null {
   const last = texts[texts.length - 1] ?? "";
-  if (!/c[oó]bra(le|selo)|m[aá]nda(le|selo)|env[ií]a(le|selo)|p[aá]sa(le|selo)/i.test(last)) return null;
+  if (!/c[oó]bra(le|selo)|cobrar(le|selo)|m[aá]nda(le|selo)|env[ií]a(le|selo)|p[aá]sa(le|selo)/i.test(last)) return null;
   const pattern =
     /\ba(?:l)?\s+((?:mi\s+|la\s+|el\s+)?(?:se[ñn]ora?\s+|se[ñn]orita\s+|do[ñn]a\s+|don\s+|profe\s+|doctor[a]?\s+|dr[a]?\.?\s+)?)([A-Za-zÁÉÍÓÚÑáéíóúñü]{2,})(\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñü]{2,})?/g;
   for (const match of last.matchAll(pattern)) {

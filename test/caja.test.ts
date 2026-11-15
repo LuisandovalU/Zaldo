@@ -779,8 +779,8 @@ test("un cobro nunca lleva un monto que nadie dijo", async () => {
   assert.equal(shop.listCharges(OWNER)[0]?.payerPhone, null);
   // Si él lo pide, sí le llega a su celular.
   const own = await say(shopDeps, OWNER, calls(["prepare_charge", { amount: 150, concept: "corte", payerName: "yo" }]), "cóbrame 150 a mí, es una prueba");
-  // El QR del cliente quedó sin confirmar: se avisa que ya no va, y sale la tarjeta nueva.
-  starts(textOf(own), "Descarté el cobro de $150.00 que no habías confirmado");
+  // El QR del cliente quedó sin confirmar: lo reemplaza la tarjeta nueva, sin más aviso.
+  assert.equal(own.length, 1);
   assert.match(cardIn(own).text, /tu celular 55 1111 1111/);
 
   // Repetir un cobro usa sus propios montos, no los del modelo.

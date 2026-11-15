@@ -619,6 +619,8 @@ function contextBlock(store: Store, owner: string, config: AppConfig, now: numbe
       ? `HAY UNA TARJETA ESPERANDO CONFIRMACIÓN: ${formatMxn(waiting.amountCents)} · ${waiting.concept} · ${chargeLabel(waiting)}. Todavía NO se ha enviado. Si la persona la acepta: confirm_charge. Si la rechaza: cancel_charge. Si la corrige: prepare_charge otra vez.`
       : "",
     recurring ? `Cobros recurrentes activos: ${recurring}.` : "",
+    draftLine(store, owner, now),
+    threadLine(store, owner),
     memory
       ? `TUS NOTAS SOBRE ESTA PERSONA (solo tú las ves: úsalas con naturalidad y nunca menciones que existen)\n${memory}`
       : "TUS NOTAS SOBRE ESTA PERSONA: todavía ninguna.",
@@ -852,7 +854,7 @@ function spokenMoney(store: Store, owner: string): number | null {
 }
 
 /** Lo que la persona escribió en sus últimos mensajes, del más viejo al más nuevo. */
-function recentUserText(store: Store, owner: string, count = 6): string[] {
+function recentUserText(store: Store, owner: string, count = 8): string[] {
   return store
     .recentTurns(owner)
     .filter((turn) => turn.role === "user")
@@ -1065,6 +1067,84 @@ function ambiguousProduct(store: Store, owner: string, names: string[], texts: s
   return null;
 }
 
+/** Cuánto vive un cobro a medias: pasado ese rato, lo que conteste la persona ya es otra cosa. */
+const DRAFT_MS = 15 * 60_000;
+const DRAFT_KEYS = ["amount", "concept", "payerName", "payerPhone", "method", "tip", "fixed", "openAmount", "every", "items"] as const;
+/** Un pedido nuevo, con todas sus letras: ese no hereda nada del cobro que quedó a medias. */
+const NEW_ORDER = /c[oó]bra(le|me|selo|les)?\b|otro cobro|cobro nuevo|nuevo cobro|\bqr de\b|\blink de\b/i;
+
+function given(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "" && !(Array.isArray(value) && !value.length);
+}
+
+/** El cobro a medias de esa persona, si sigue vigente. */
+function draftOf(store: Store, owner: string, now: number): Record<string, unknown> | null {
+  const draft = store.getProfile(owner).draft;
+  return draft && now - draft.at < DRAFT_MS ? draft.args : null;
+}
+
+function setDraft(store: Store, owner: string, args: Record<string, unknown> | null, now: number): void {
+  const { draft: _old, ...profile } = store.getProfile(owner);
+  void _old;
+  if (!args) {
+    store.setProfile(profile);
+    return;
+  }
+  const kept: Record<string, unknown> = {};
+  for (const key of DRAFT_KEYS) if (given(args[key])) kept[key] = args[key];
+  store.setProfile({ ...profile, draft: { args: kept, at: now } });
+}
+
+/**
+ * El cobro no pierde el hilo. Si la caja tuvo que preguntar algo ("¿cuál es
+ * su celular?", "¿cuál de los dos?"), lo que ya se sabía queda guardado; la
+ * respuesta de la persona completa ESE cobro aunque el modelo solo mande el
+ * dato nuevo. Todo se vuelve a cotejar contra lo que ella escribió.
+ */
+function chargeWithThread(
+  store: Store,
+  config: AppConfig,
+  owner: string,
+  now: number,
+  raw: Record<string, unknown>,
+  last: string,
+): ReturnType<typeof prepareCharge> {
+  const draft = NEW_ORDER.test(last) ? null : draftOf(store, owner, now);
+  const args: Record<string, unknown> = { ...(draft ?? {}) };
+  for (const [key, value] of Object.entries(raw)) if (given(value)) args[key] = value;
+  // Un monto nuevo sin productos reemplaza al ticket anterior solo si el modelo no los repitió… y viceversa no aplica: se respetan los dos.
+  const done = prepareCharge(store, config, owner, now, args, true);
+  if (done.charge) setDraft(store, owner, null, now);
+  else if (done.output.startsWith(DIRECT)) setDraft(store, owner, args, now);
+  return done;
+}
+
+/** El cobro a medias, dicho en una línea para el modelo. */
+function draftLine(store: Store, owner: string, now: number): string {
+  const draft = draftOf(store, owner, now);
+  if (!draft) return "";
+  const parts = [
+    given(draft.amount) ? `monto ${String(draft.amount)}` : "",
+    Array.isArray(draft.items) ? `productos ${draft.items.map((item) => `${String((item as Record<string, unknown>).qty ?? 1)} ${String((item as Record<string, unknown>).name ?? "")}`).join(", ")}` : "",
+    given(draft.concept) ? `concepto ${String(draft.concept)}` : "",
+    given(draft.payerName) ? `para ${String(draft.payerName)}` : "",
+    given(draft.payerPhone) ? `celular ${String(draft.payerPhone)}` : "",
+    given(draft.every) ? `se repite ${String(draft.every)}` : "",
+    given(draft.method) ? `por ${String(draft.method)}` : "",
+  ].filter(Boolean);
+  if (!parts.length) return "";
+  return `COBRO A MEDIAS (le preguntaste un dato y estás esperando la respuesta): ${parts.join(" · ")}. Lo que la persona conteste ahora completa ESE cobro: llama a prepare_charge con el dato nuevo; lo demás ya está guardado. No vuelvas a preguntar lo que ya dijo.`;
+}
+
+/** Lo último que preguntó Zaldo, para que una respuesta corta se lea como respuesta a eso. */
+function threadLine(store: Store, owner: string): string {
+  const said = lastAssistantText(store, owner).trim();
+  if (!said || !said.includes("?")) return "";
+  const question = said.split("\n").filter((line) => line.includes("?")).pop() ?? "";
+  if (!question) return "";
+  return `EL HILO: lo último que preguntaste fue "${question.slice(0, 200)}". Si el mensaje de la persona es corto (un monto, un nombre, un celular, un sí o un no, una opción), es la respuesta a esa pregunta: sigue ese hilo.`;
+}
+
 export function prepareCharge(
   store: Store,
   config: AppConfig,
@@ -1187,10 +1267,23 @@ export function prepareCharge(
     self = false;
     name = "";
   }
+  // Un nombre que la persona nunca dijo (y que no es un cliente guardado) lo inventó el modelo.
+  if (verify && name && !self) {
+    const heard = fold(said.join(" "));
+    const saidIt = fold(name)
+      .split(" ")
+      .some((word) => word.length >= 3 && heard.includes(word));
+    const saved = store.listContacts(owner).some((contact) => fold(contact.name) === fold(name));
+    if (!saidIt && !saved) name = "";
+  }
   if (!name && !self && verify) {
-    // El modelo deja fuera muy seguido a quién se le cobra: se lee del mensaje.
+    // El modelo deja fuera muy seguido a quién se le cobra: se lee de lo que dijo, del mensaje más nuevo hacia atrás.
     if (SELF_WORDS.test(last)) self = true;
-    else name = spokenPayer(said) ?? "";
+    else {
+      // Un pedido nuevo ("cobra 40 de agua") solo se lee a sí mismo; una respuesta corta sigue el hilo de lo anterior.
+      const from = NEW_ORDER.test(last) ? [last] : said.slice(-3).reverse();
+      name = from.map((text) => spokenPayer([text])).find((found) => !!found) ?? "";
+    }
   }
   const rawPhone = typeof raw.payerPhone === "string" && raw.payerPhone.trim() ? raw.payerPhone : "";
   // Si dijo "yo" sin que nadie lo pidiera y el número es el del dueño, se descarta: es un cobro a un cliente.
@@ -1314,8 +1407,8 @@ export function prepareCharge(
   for (const stale of store.listCharges(owner)) {
     if (stale.status !== "awaiting_confirm") continue;
     store.updateCharge({ ...stale, status: "cancelled" });
-    // Cambió a quién le llega (otro celular, o de QR a notificación): eso es otro cobro, no una corrección.
-    if ((stale.payerPhone ?? "") !== (phone ?? "")) {
+    // Iba para otro celular: eso es otro cobro, y se avisa. Completar un QR con su celular es el mismo cobro.
+    if (stale.payerPhone && stale.payerPhone !== (phone ?? "")) {
       const who = stale.payerName === PAYER_OPEN || stale.payerName === PAYER_SELF ? "" : ` a ${stale.payerName}`;
       replaced = `Descarté el cobro de ${formatMxn(stale.amountCents)}${who} que no habías confirmado: solo armo uno a la vez.`;
     }
@@ -1390,7 +1483,7 @@ function execute(
       if (!wantsCharge(store, owner, said)) {
         return { output: fail("la persona no pidió ningún cobro en este mensaje. Contesta lo que dijo, en una o dos líneas, sin armar cobros.") };
       }
-      return prepareCharge(store, config, owner, now, raw, true);
+      return chargeWithThread(store, config, owner, now, raw, last);
     case "ask_choice": {
       // Una duda con respuestas contadas: una pregunta corta y dos o tres botones. Nada de menús.
       const question = nameOf(raw.question).slice(0, 300);
@@ -1513,6 +1606,7 @@ function execute(
     }
     case "cancel_charge":
       if (already) return { output: fail("acabas de armar ese cobro en este mensaje: no lo canceles.") };
+      setDraft(store, owner, null, now);
       return { output: cancelWaiting(store, owner) };
     case "list_recurring": {
       const lines = recurringLines(store, owner, now);

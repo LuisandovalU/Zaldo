@@ -134,6 +134,8 @@ export interface Profile {
   choiceStyle?: "buttons" | "poll" | "text";
   /** Con qué formato de botones se le escribe (el que comprobó que ve). */
   choiceVariant?: string;
+  /** Un cobro que quedó a medias porque faltaba un dato: lo que ya se sabía, para no volver a pedirlo. */
+  draft?: { args: Record<string, unknown>; at: number };
   /** Ya se le explicó el modo demo al llegar. */
   onboarded?: boolean;
 }

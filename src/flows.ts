@@ -890,7 +890,11 @@ export async function handleInbound(
       // El botón de una pregunta ("o:Dame un QR") es su texto: sigue la conversación como si lo hubiera escrito.
       if (inbound.type === "button" && inbound.buttonId.startsWith("o:")) {
         messages = await onText(deps, inbound.owner, inbound.buttonId.slice(2));
-      } else if (inbound.type === "button") messages = await onButton(deps, inbound.owner, inbound.buttonId);
+      } else if (inbound.type === "button") {
+        // El toque también es parte de la conversación: sin él, el hilo tiene un hueco.
+        remember(deps.store, inbound.owner, "user", inbound.buttonId.startsWith("x:") ? "Cancelar" : "Confirmar", deps.now());
+        messages = await onButton(deps, inbound.owner, inbound.buttonId);
+      }
       else if (inbound.type === "audio") {
         let transcript = "";
         try {

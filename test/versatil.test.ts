@@ -581,8 +581,8 @@ test("lo que rompió el jurado simulado ya no se rompe", async () => {
 
   // Un celular sin nombre es de un cliente, no del dueño.
   const toNumber = await say(deps, calls(["prepare_charge", { amount: 300, payerPhone: "5522223333", method: "push" }]), "cobra 300 al 5522223333");
-  // El QR de los cortes quedó sin confirmar: se avisa que ya no va, y sale la tarjeta nueva.
-  starts(textOf(toNumber), "Descarté el cobro de $300.00 que no habías confirmado");
+  // El QR de los cortes quedó sin confirmar: lo reemplaza la tarjeta nueva, sin más aviso.
+  assert.equal(toNumber.length, 1);
   assert.equal(cardIn(toNumber).text, "Cobro por $300.00\nLe llega a: el celular 55 2222 3333, en la app de su banco\nPor: notificación CoDi");
   starts(textOf(await say(deps, never, "sí, mándalo")), "Listo, ya salió. Al 55 2222 3333 le llega la notificación CoDi por $300.00");
   assert.equal(store.listContacts(OWNER).length, 0);
