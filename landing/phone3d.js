@@ -317,13 +317,15 @@ function init() {
     needsRender = true;
   }
 
-  // Rig con resortes (mismos parámetros que spring() de las escenas)
-  const rig = { yaw: reduceMotion ? 0 : -0.95, pitch: reduceMotion ? 0 : 0.2, vyaw: 0, vpitch: 0 };
+  // Rig con resortes: comienza de perfil (-Math.PI / 2) en el tope y al hacer scroll gira al frente (0)
+  const PROFILE_YAW = -Math.PI / 2 + 0.03;
+  const rig = { yaw: reduceMotion ? 0 : PROFILE_YAW, pitch: 0, vyaw: 0, vpitch: 0 };
   const pointer = { x: 0, y: 0, overScreen: false };
   let dragYaw = 0;
   let dragging = false;
   let dragLastX = 0;
   let scrollP = 0;
+  let unfoldP = reduceMotion ? 1 : 0;
   let kickDir = 1;
   let needsRender = true;
   let visible = true;
@@ -376,22 +378,21 @@ function init() {
   window.addEventListener('zaldo:preset', () => {
     if (reduceMotion) return;
     kickDir = -kickDir;
-    rig.vyaw += kickDir * 3.1;
-    rig.vpitch -= 0.7;
+    rig.vyaw += kickDir * 2.2;
+    rig.vpitch -= 0.5;
   });
 
-  // Giro por scroll: 0 con el teléfono centrado en la ventana, crece al entrar o salir
+  // Giro por scroll: en scrollY=0 comienza de perfil (PROFILE_YAW) y al bajar se pone de frente (0)
   function readScroll() {
-    const r = viewport.getBoundingClientRect();
-    const vh = window.innerHeight || 1;
-    const offset = (vh / 2 - (r.top + r.height / 2)) / vh;
-    const dead = 0.12;
-    const eased = Math.sign(offset) * Math.max(0, Math.abs(offset) - dead);
-    scrollP = THREE.MathUtils.clamp(eased * 1.5, -1, 1);
+    const sy = Math.max(0, window.scrollY || window.pageYOffset || 0);
+    const rawUnfold = THREE.MathUtils.clamp(sy / 180, 0, 1);
+    unfoldP = reduceMotion ? 1 : rawUnfold * rawUnfold * (3 - 2 * rawUnfold);
+    scrollP = 0;
   }
   window.addEventListener('scroll', readScroll, { passive: true });
   window.addEventListener('resize', readScroll);
   readScroll();
+  rig.yaw = reduceMotion ? 0 : PROFILE_YAW * (1 - unfoldP);
 
   function frame(now) {
     raf = 0;
@@ -402,8 +403,10 @@ function init() {
     const t = now / 1000;
     const hoverK = pointer.overScreen ? 0.3 : 1;
     const idle = reduceMotion ? 0 : 1;
-    const targetYaw = pointer.x * 0.4 * hoverK + scrollP * 0.62 + dragYaw + Math.sin(t * 0.55) * 0.035 * idle;
-    const targetPitch = pointer.y * 0.16 * hoverK - Math.abs(scrollP) * 0.1 + Math.cos(t * 0.45) * 0.012 * idle;
+    const baseYaw = PROFILE_YAW * (1 - unfoldP);
+    const pointerInfluence = unfoldP * 0.32 * hoverK;
+    const targetYaw = baseYaw + pointer.x * pointerInfluence + dragYaw + Math.sin(t * 0.55) * 0.018 * idle * unfoldP;
+    const targetPitch = pointer.y * 0.12 * hoverK * unfoldP + Math.cos(t * 0.45) * 0.01 * idle * unfoldP;
 
     // Integración semi-implícita en subpasos para estabilidad
     const steps = 2;
