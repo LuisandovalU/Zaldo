@@ -77,6 +77,7 @@ VENDER Y COBRAR (prepare_charge)
   · Dan el celular del cliente, o es un cliente guardado ("cóbrale a Ana"): notificación a su banco. payerName y, si lo dieron, payerPhone.
   · Solo si la persona dice "cóbrame", "a mí" o "quiero pagar": payerName "yo". Si no sabes su celular (ver contexto), pide solo su celular de 10 dígitos y pásalo en payerPhone. "Cobra 2 cortes" a secas es una venta a un cliente: QR, nunca "yo".
   · Piden link o pagar con tarjeta: method "link".
+- No existe monto mínimo: cualquier monto mayor a cero se cobra, también $0.01 (así se prueba). Nunca rechaces ni cambies el monto que te dijeron. Si un cobro no se puede, te lo dice prepare_charge: llámala siempre antes de decir que no.
 - prepare_charge no envía nada: sale una tarjeta que la persona confirma o cancela. No digas que ya se envió.
 - Nunca digas que ya pagaron: eso solo lo confirma el banco, y tú avisas solo cuando cae. Para "¿ya pagó?" usa charge_status.
 - Un solo cobro por mensaje, y solo a quien lo espera: no mandes cobros en masa ni a números que la persona no te dio.
@@ -470,6 +471,10 @@ const FINAL_TOOLS = new Set([
 /** El modelo dice que apuntó, guardó o borró algo. Solo vale si de verdad llamó a la herramienta. */
 const CLAIMS_ACTION =
   /\b(apuntad[oa]s?|apunt[ée]|anotad[oa]s?|anot[ée]|registrad[oa]s?|registr[ée]|agregad[oa]s?|agregu[ée]|guardad[oa]s?|guard[ée]|borrad[oa]s?|borr[ée]|quit[ée]|qued[óo] (apuntad|guardad|registrad|agregad|list)[oa])(?![a-záéíóúñ])/i;
+
+/** El modelo rechaza un cobro por su cuenta ("el mínimo es 1 peso"). Eso solo lo decide la caja. */
+const REFUSES_CHARGE =
+  /(no (puedo|es posible|se puede)|no hago)[^.!?\n]{0,40}(cobr|generar)|(monto )?m[ií]nimo (es|debe|de|para)/i;
 
 const NOT_DONE =
   'No lo pude apuntar. Dímelo otra vez en una frase, por ejemplo: "gasté 300 en insumos" o "me pagaron 200 en efectivo".';
@@ -967,6 +972,17 @@ export async function runAgent(input: {
           role: "system",
           content:
             "Ese mensaje no se envió: dijiste que hiciste algo sin llamar a ninguna herramienta, así que nada quedó guardado. Llama ahora a la herramienta que corresponde con los datos del último mensaje de la persona. No le preguntes si quiere que lo apuntes: ya lo pidió. Si en realidad no pidió apuntar, guardar ni borrar nada, contesta sin decir que lo hiciste.",
+        });
+        continue;
+      }
+      // Rechazó un cobro sin preguntarle a la caja ("el mínimo es 1 peso"): que la consulte, una vez.
+      if (reply && !tools.length && !nudged && REFUSES_CHARGE.test(reply)) {
+        nudged = true;
+        messages.push({ role: "assistant", content: reply });
+        messages.push({
+          role: "system",
+          content:
+            "Ese mensaje no se envió: rechazaste o cambiaste un cobro sin llamar a prepare_charge. No existe monto mínimo y tú no decides qué se puede cobrar: llama ahora a prepare_charge con el monto y el concepto exactos que dijo la persona. Si de verdad falta un dato (monto, concepto o celular), pregunta solo eso.",
         });
         continue;
       }

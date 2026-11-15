@@ -600,6 +600,26 @@ test("las cifras salen del libro, no del modelo", async () => {
   };
   assert.equal(textOf(await say(deps, OWNER, corrected)), "¿A cuánto cobras el tinte?");
 
+  // El modelo se niega a cobrar un centavo ("el mínimo es 1 peso"): eso lo decide la caja, no él.
+  asked = 0;
+  const refuser: Completer = async ({ messages }) => {
+    asked += 1;
+    if (asked === 1) return { content: "No puedo generar un cobro de 0.01, ya que el mínimo es 1 peso.", toolCalls: [] };
+    assert.equal(messages.at(-1)?.role, "system");
+    return { content: null, toolCalls: [call("prepare_charge", { amount: 0.01, concept: "prueba" })] };
+  };
+  const cent = await say(deps, OWNER, refuser, "dame un QR de 0.01 de prueba");
+  assert.ok(textOf(cent).startsWith("Cobro por $0.01"));
+  assert.equal(asked, 2);
+
+  // Explicar que cobra y no paga no cuenta como negarse.
+  asked = 0;
+  await say(deps, OWNER, async () => {
+    asked += 1;
+    return { content: "Yo no muevo tu dinero: yo cobro. Si quieres pagar algo aquí, te mando el cobro CoDi. ¿De cuánto?", toolCalls: [] };
+  }, "quiero hacer un pago");
+  assert.equal(asked, 1);
+
   // Una plática normal no dispara nada.
   asked = 0;
   const chat: Completer = async () => {
