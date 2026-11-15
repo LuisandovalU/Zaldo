@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zaldo — Cobra con CoDi y lleva tu saldo en WhatsApp</title>
+  <meta name="description" content="Olvídate de pasar tu CLABE o revisar capturas de pantalla. Manda una nota de voz en WhatsApp, cobra con CoDi al instante y recibe el aviso «Ya cayó» directo en tu chat." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/png" href="assets/zaldo-cube.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body id="top">
+  <!-- Full-Width Apple Obsidian Glass Navigation Bar -->
+  <header class="navbar" id="navbar">
+    <div class="shell nav-inner">
+      <a href="#top" class="brand" aria-label="Zaldo inicio">
+        <span class="brand-badge">
+          <img src="assets/zaldo-cube.png" alt="Zaldo Logo" class="brand-cube" />
+        </span>
+        <span class="wordmark-crop nav-wordmark">
+          <img src="assets/zaldo-wordmark.jpg" alt="ZALDO" />
+        </span>
+      </a>
+
+      <nav class="nav-links" id="nav-links" aria-label="Navegación principal">
+        <span class="nav-pill" id="nav-pill" aria-hidden="true"></span>
+        <a href="#problemas">Por qué Zaldo</a>
+        <a href="#demo">Prueba la demo</a>
+        <a href="#como-funciona">Cómo se usa</a>
+        <a href="#faq">Dudas</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a href="#demo" class="btn btn-sm">
+          <span class="reicon-inline" data-reicon="whatsapp"></span>
+          Probar en WhatsApp
+        </a>
+      </div>
+    </div>
+
+    <div class="scroll-rail" aria-hidden="true">
+      <div class="scroll-rail-fill" id="scroll-rail"></div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero Section -->
+    <section class="hero" id="demo">
+      <div class="shell hero-grid">
+        <div class="hero-copy">
+          <div class="sec-index hero-kicker fade-in d1">
+            <span class="reicon-inline" data-reicon="whatsapp"></span>
+            <span class="sec-name">Asistente de cobros</span>
+            <span class="sec-rule" aria-hidden="true"></span>
+            <span class="sec-meta">vive en tu WhatsApp</span>
+          </div>
+
+          <h1 class="fade-in d2">
+            Conecta tu CLABE
+            <span class="h-mark">una vez.<svg viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true"><path d="M3 8 C38 2 72 11 110 6 S168 3 197 7" pathLength="1" /></svg></span>
+            <span class="ink-muted">Cobra por WhatsApp.</span>
+          </h1>
+
+          <p class="hero-lead fade-in d3">
+            Solo abre el chat de Zaldo en WhatsApp, conecta tu cuenta CLABE de 18 dígitos sin dar contraseñas de tu banco y empieza a cobrar con notas de voz, QR o link. Sin instalar herramientas ni bajar apps nuevas.
+          </p>
+
+          <div class="hero-ctas fade-in d4">
+            <a href="#como-funciona" class="btn btn-primary btn-lg">
+              Cómo conecto mi CLABE
+              <span class="reicon-inline" data-reicon="arrow-right"></span>
+            </a>
+            <a href="#problemas" class="btn btn-outline btn-lg">
+              Por qué es tan fácil
+            </a>
+          </div>
+
+          <p class="hero-micro fade-in d4">
+            Solo tu CLABE (18 dígitos) · Sin contraseñas bancarias · Tu número de WhatsApp queda vinculado al instante
+          </p>
+
+          <!-- Interactive Scenario Picker (Astryx Segmented Lens) -->
+          <div class="picker-block fade-in d4">
+            <div class="picker-label">
+              <span>Toca cada paso y pruébalo en el celular</span>
+              <span class="reicon-inline picker-arrow" data-reicon="arrow-right"></span>
+            </div>
+            <div class="picker-grid" id="picker-grid" role="radiogroup" aria-label="Ejemplos de uso en WhatsApp">
+              <span class="picker-lens" id="picker-lens" aria-hidden="true"></span>
+              <button type="button" class="picker-card picker-card-wide active" data-preset="clabe" role="radio" aria-checked="true">
+                <span class="picker-icon reicon-box" data-reicon="bank"></span>
+                <span class="picker-text">
+                  <strong>Inicio: Conecta tu CLABE una sola vez</strong>
+                  <span>«Quiero conectar mi CLABE 012180... a nombre de Ana»</span>
+                </span>
+                <span class="picker-step-badge">1 solo paso</span>
+              </button>
+
+              <button type="button" class="picker-card" data-preset="push" role="radio" aria-checked="false">
+                <span class="picker-icon reicon-box" data-reicon="mic"></span>
+                <span class="picker-text">
+                  <strong>Cobrar por nota de voz</strong>
+                  <span>«Cóbrale $350 a Sofi»</span>
+                </span>
+              </button>
+
+              <button type="button" class="picker-card" data-preset="qr" role="radio" aria-checked="false">
+                <span class="picker-icon reicon-box" data-reicon="qr"></span>
+                <span class="picker-text">
+                  <strong>Cobrar con QR en persona</strong>
+                  <span>«Mándame un QR de $180»</span>
+                </span>
+              </button>
+
+              <button type="button" class="picker-card" data-preset="link" role="radio" aria-checked="false">
+                <span class="picker-icon reicon-box" data-reicon="link"></span>
+                <span class="picker-text">
+                  <strong>Mandar link de pago</strong>
+                  <span>«Link de $1,200 por el diseño»</span>
+                </span>
+              </button>
+
+              <button type="button" class="picker-card" data-preset="saldo" role="radio" aria-checked="false">
+                <span class="picker-icon reicon-box" data-reicon="wallet-money"></span>
+                <span class="picker-text">
+                  <strong>Ver cómo va tu día</strong>
+                  <span>«¿Cómo va mi zaldo hoy?»</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Stage: Tall Titanium iPhone + iOS Dark Liquid Glass WhatsApp -->
+        <div class="hero-stage fade-in d3">
+          <div class="stage-pedestal" aria-hidden="true"></div>
+
+          <div class="iphone-3d-wrap" id="iphone-tilt">
+            <div class="iphone-bezel">
+              <span class="hw-btn hw-btn-action" aria-hidden="true"></span>
+              <span class="hw-btn hw-btn-vol-up" aria-hidden="true"></span>
+              <span class="hw-btn hw-btn-vol-down" aria-hidden="true"></span>
+              <span class="hw-btn hw-btn-power" aria-hidden="true"></span>
+              <div class="iphone-sheen" aria-hidden="true"></div>
+
+              <div class="iphone-screen">
+                <div class="screen-glare" aria-hidden="true"></div>
+                <div class="wa-header-chrome">
+                  <!-- iOS Status Bar + Dynamic Island -->
+                  <div class="ios-statusbar" id="ios-statusbar">
+                    <span class="ios-time">9:41</span>
+                    <div class="dynamic-island">
+                      <span class="island-cam"></span>
+                    </div>
+                    <div class="ios-icons" aria-hidden="true">
+                      <span class="ios-mic-dot"></span>
+                      <span class="ios-signal"><i></i><i></i><i></i><i></i></span>
+                      <span class="ios-wifi reicon-inline" data-reicon="wifi"></span>
+                      <span class="ios-battery-pill">85</span>
+                    </div>
+                  </div>
+
+                  <!-- WhatsApp iOS Liquid Glass Header -->
+                  <div class="wa-topbar">
+                    <button type="button" class="wa-glass-btn wa-back-btn" id="wa-back-btn" aria-label="Reiniciar chat" title="Reiniciar ejemplo">
+                      <span class="reicon-inline" data-reicon="chevron-left"></span>
+                    </button>
+                    <div class="wa-identity">
+                      <div class="wa-avatar">
+                        <img src="assets/zaldo-cube.png" alt="Zaldo" />
+                      </div>
+                      <div class="wa-contact">
+                        <div class="wa-name">
+                          <span>Zaldo</span>
+                          <span class="wa-badge-check" title="Cuenta oficial verificada">
+                            <span class="reicon-inline" data-reicon="check-circle-filled"></span>
+                          </span>
+                        </div>
+                        <div class="wa-status" id="wa-status">en línea</div>
+                      </div>
+                    </div>
+                    <button type="button" class="wa-glass-btn wa-lock-btn" id="wa-lock-btn" aria-label="Seguridad sin claves bancarias" title="Solo tu CLABE, sin contraseñas">
+                      <span class="reicon-inline" data-reicon="shield-lock"></span>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- WhatsApp Chat Canvas -->
+                <div class="wa-chat" id="wa-chat" aria-live="polite"></div>
+
+                <!-- WhatsApp Bottom Liquid Glass Composer + Voice Recorder + iOS Dark Keyboard -->
+                <div class="wa-composer-chrome" id="wa-composer-chrome">
+                  <div class="wa-composer">
+                    <span class="wa-composer-icon wa-plus reicon-inline" data-reicon="plus" aria-hidden="true"></span>
+                    <button type="button" class="wa-input-fake" id="wa-input-hint" title="Repetir este ejemplo">
+                      <span class="wa-input-text" id="wa-input-text">Toca Confirmar arriba…</span><span class="wa-caret" aria-hidden="true"></span>
+                    </button>
+                    <span class="wa-composer-icon wa-cam-icon reicon-inline" data-reicon="camera" aria-hidden="true"></span>
+                    <button type="button" class="wa-mic-btn" id="wa-replay-btn" aria-label="Repetir ejemplo actual" title="Repetir ejemplo">
+                      <span class="wa-btn-glyph-mic reicon-inline" data-reicon="mic"></span>
+                      <span class="wa-btn-glyph-send reicon-inline" data-reicon="send"></span>
+                    </button>
+                  </div>
+
+                  <!-- Live iOS Voice Recording Tray (matching iOS WhatsApp dark recorder) -->
+                  <div class="wa-recorder" id="wa-recorder" aria-hidden="true">
+                    <div class="wa-rec-top">
+                      <span class="wa-rec-timer" id="wa-rec-timer">0:00</span>
+                      <div class="wa-rec-wave" id="wa-rec-wave"></div>
+                    </div>
+                    <div class="wa-rec-actions">
+                      <button type="button" class="wa-rec-trash" id="wa-rec-trash" tabindex="-1" aria-label="Descartar audio">
+                        <span class="reicon-inline" data-reicon="trash"></span>
+                      </button>
+                      <span class="wa-rec-pause" aria-hidden="true">
+                        <span class="reicon-inline" data-reicon="pause"></span>
+                      </span>
+                      <button type="button" class="wa-rec-send" id="wa-rec-send" tabindex="-1" aria-label="Enviar nota de voz">
+                        <span class="reicon-inline" data-reicon="send"></span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Compact iOS Dark Keyboard Drawer during live first-message typing -->
+                  <div class="wa-keyboard" id="wa-keyboard" aria-hidden="true">
+                    <div class="kb-suggestions">
+                      <span>Hola</span>
+                      <span>CLABE</span>
+                      <span>CoDi</span>
+                    </div>
+                    <div class="kb-row">
+                      <span>Q</span><span>W</span><span>E</span><span>R</span><span>T</span><span>Y</span><span>U</span><span>I</span><span>O</span><span>P</span>
+                    </div>
+                    <div class="kb-row">
+                      <span>A</span><span>S</span><span>D</span><span>F</span><span>G</span><span>H</span><span>J</span><span>K</span><span>L</span><span>Ñ</span>
+                    </div>
+                    <div class="kb-row kb-row-3">
+                      <span class="kb-mod"></span><span>Z</span><span>X</span><span>C</span><span>V</span><span>B</span><span>N</span><span>M</span><span class="kb-mod"></span>
+                    </div>
+                    <div class="kb-row kb-row-bottom">
+                      <span class="kb-key-wide">123</span>
+                      <span class="kb-space">espacio</span>
+                      <span class="kb-return" id="kb-return">enviar</span>
+                    </div>
+                  </div>
+
+                  <div class="ios-home-bar" aria-hidden="true"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Dock interactivo: pruebas rápidas + estado en vivo del teléfono -->
+      <div class="shell hero-dock-wrap">
+        <div class="hero-dock fade-in d4" id="hero-dock">
+          <div class="dock-main">
+            <span class="dock-title">Pruébalo con un clic</span>
+            <div class="dock-chips" id="dock-chips" role="group" aria-label="Demostraciones rápidas en el teléfono">
+              <button type="button" class="dock-chip active" data-preset="clabe" aria-pressed="true">
+                <span class="reicon-inline" data-reicon="bank"></span>
+                <span><b>Conectar CLABE</b> (18 díg.)</span>
+              </button>
+              <button type="button" class="dock-chip" data-preset="push" aria-pressed="false">
+                <span class="reicon-inline" data-reicon="mic"></span>
+                <span><b>Nota de voz:</b> «Cóbrale $350 a Sofi»</span>
+              </button>
+              <button type="button" class="dock-chip" data-preset="qr" aria-pressed="false">
+                <span class="reicon-inline" data-reicon="qr"></span>
+                <span><b>Generar QR</b> de $180 en mostrador</span>
+              </button>
+              <button type="button" class="dock-chip" data-preset="link" aria-pressed="false">
+                <span class="reicon-inline" data-reicon="link"></span>
+                <span><b>Mandar link</b> de $1,200</span>
+              </button>
+              <button type="button" class="dock-chip" data-preset="saldo" aria-pressed="false">
+                <span class="reicon-inline" data-reicon="wallet-money"></span>
+                <span><b>Consultar:</b> «¿Cómo va mi zaldo?»</span>
+              </button>
+            </div>
+          </div>
+          <div class="dock-live">
+            <div class="dock-status" id="dock-status" aria-live="polite">
+              <span class="dock-dot" aria-hidden="true"></span>
+              <span class="dock-status-text">
+                <span class="dock-status-kicker">Simulando</span>
+                <span class="dock-status-step" id="dock-status-step">Conectar CLABE</span>
+              </span>
+            </div>
+            <button type="button" class="dock-replay" id="dock-replay">
+              <span class="reicon-inline" data-reicon="play"></span>
+              Repetir
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pain Points Solved Section (Light Surface) -->
+    <section class="section section-light" id="problemas">
+      <div class="shell">
+        <header class="section-head reveal">
+          <div class="sec-index">
+            <span class="sec-num">01<i>/04</i></span>
+            <span class="sec-name">Por qué Zaldo</span>
+            <span class="sec-rule" aria-hidden="true"></span>
+            <div class="problems-scroll-pill" aria-hidden="true">
+              <span class="problems-scroll-dot"></span>
+              <span class="problems-scroll-label">Así te simplifica el día</span>
+              <span class="problems-scroll-bar"><i id="problems-scroll-fill"></i></span>
+            </div>
+          </div>
+          <div class="sec-body">
+            <h2>Cobrar fácil, <span class="h-soft">sin vueltas ni complicaciones.</span></h2>
+            <p>Olvídate de perseguir pagos o abrir mil aplicaciones. Todo se resuelve en un mensaje.</p>
+          </div>
+        </header>
+
+        <div class="problems-grid" id="problems-grid">
+          <article class="card prob-card reveal" data-prob-card="0">
+            <div class="prob-stage" data-scene="clabe" aria-hidden="true"></div>
+            <div class="prob-copy">
+              <span class="prob-tag">Tu cuenta</span>
+              <h3>Ya no dictes los 18 dígitos</h3>
+              <p>La conectas una vez en WhatsApp y listo.</p>
+            </div>
+          </article>
+
+          <article class="card prob-card reveal" data-prob-card="1">
+            <div class="prob-stage" data-scene="verified" aria-hidden="true"></div>
+            <div class="prob-copy">
+              <span class="prob-tag">Tus pagos</span>
+              <h3>Sin capturas falsas ni dudas</h3>
+              <p>Zaldo te avisa solo cuando el pago es real.</p>
+            </div>
+          </article>
+
+          <article class="card prob-card reveal" data-prob-card="2">
+            <div class="prob-stage" data-scene="zero-install" aria-hidden="true"></div>
+            <div class="prob-copy">
+              <span class="prob-tag">Tu celular</span>
+              <h3>Sin bajar apps ni registrarte</h3>
+              <p>Todo pasa en tu WhatsApp de siempre.</p>
+            </div>
+          </article>
+
+          <article class="card card-inverted prob-card reveal" data-prob-card="3">
+            <div class="prob-stage prob-stage-dark" data-scene="security" aria-hidden="true"></div>
+            <div class="prob-copy">
+              <span class="prob-tag">Tu seguridad</span>
+              <h3>Nunca te pide claves de tu banco</h3>
+              <p>Solo tu número cobra, y tú confirmas antes.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 Easy Steps (Matte Black Contrast Section) -->
+    <section class="section section-dark" id="como-funciona">
+      <div class="shell">
+        <header class="section-head reveal">
+          <div class="sec-index sec-index-pill">
+            <span class="sec-num">02<i>/04</i></span>
+            <span class="sec-name">Cómo se usa</span>
+            <span class="sec-rule" aria-hidden="true"></span>
+            <span class="sec-meta">Sin apps nuevas</span>
+          </div>
+          <div class="sec-body">
+            <h2>De «hola» a «¡Ya cayó!» <span class="h-soft">en cuatro mensajes.</span></h2>
+            <p>Conectas tu CLABE una sola vez. Lo demás pasa en el chat.</p>
+          </div>
+        </header>
+
+        <ol class="how-grid" id="how-flow">
+          <li class="how-step reveal" data-step="0">
+            <div class="step-node" aria-hidden="true"><span>1</span></div>
+            <article class="card-dark step-card">
+              <div class="step-stage" data-scene="step-clabe" aria-hidden="true"></div>
+              <div class="step-copy">
+                <h3>Conecta tu CLABE una vez</h3>
+                <p>Mandas tus 18 dígitos en el chat sin contraseñas y tu número queda listo.</p>
+              </div>
+            </article>
+          </li>
+          <li class="how-step reveal" data-step="1">
+            <div class="step-node" aria-hidden="true"><span>2</span></div>
+            <article class="card-dark step-card">
+              <div class="step-stage" data-scene="step-voz" aria-hidden="true"></div>
+              <div class="step-copy">
+                <h3>Pide el cobro por voz o texto</h3>
+                <p>Dile <em>«Cóbrale $350 a Sofi»</em> o pide un QR y toca <strong>Confirmar</strong>.</p>
+              </div>
+            </article>
+          </li>
+          <li class="how-step reveal" data-step="2">
+            <div class="step-node" aria-hidden="true"><span>3</span></div>
+            <article class="card-dark step-card">
+              <div class="step-stage" data-scene="step-pago" aria-hidden="true"></div>
+              <div class="step-copy">
+                <h3>Te pagan desde su banco</h3>
+                <p>Tu cliente aprueba el cobro, escanea tu QR o abre el link en segundos.</p>
+              </div>
+            </article>
+          </li>
+          <li class="how-step how-step-hero reveal" data-step="3">
+            <div class="step-node" aria-hidden="true"><span>4</span></div>
+            <article class="card-dark step-card step-card-hero">
+              <div class="step-stage step-stage-light" data-scene="step-cayo" aria-hidden="true"></div>
+              <div class="step-copy">
+                <h3>Zaldo te avisa: «¡Ya cayó!»</h3>
+                <p>El dinero entra directo a tu cuenta y recibes la confirmación al instante.</p>
+              </div>
+            </article>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Use Cases for Everyday People (Pure White) -->
+    <section class="section" id="casos">
+      <div class="shell">
+        <header class="section-head reveal">
+          <div class="sec-index">
+            <span class="sec-num">03<i>/04</i></span>
+            <span class="sec-name">Para quién</span>
+            <span class="sec-rule" aria-hidden="true"></span>
+            <span class="sec-meta">Negocio, clientes, amigos</span>
+          </div>
+          <div class="sec-body">
+            <h2>Hecho para quien cobra, <span class="h-soft">no para contadores.</span></h2>
+            <p>Si vendes, das un servicio o divides la cuenta, te sirve.</p>
+          </div>
+        </header>
+
+        <div class="cases-grid">
+          <article class="card reveal">
+            <div class="case-icon-wrap" data-reicon="store"></div>
+            <h3>Negocios y locales</h3>
+            <p>Cobra en mostrador con un QR en segundos, repite cobros frecuentes y revisa cuánto vendiste al cierre del día.</p>
+          </article>
+          <article class="card reveal">
+            <div class="case-icon-wrap" data-reicon="user"></div>
+            <h3>Profesionistas y freelancers</h3>
+            <p>Manda links de pago o cobros CoDi a tus clientes por WhatsApp sin perseguir comprobantes ni dar tu CLABE.</p>
+          </article>
+          <article class="card reveal">
+            <div class="case-icon-wrap" data-reicon="wallet-money"></div>
+            <h3>Control personal y amigos</h3>
+            <p>Anota tus gastos del día, cobra la parte de la cena o pregunta «¿cómo va mi zaldo?» en cualquier momento.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ Accordion (Light Surface) -->
+    <section class="section section-light" id="faq">
+      <div class="shell faq-shell">
+        <header class="section-head reveal">
+          <div class="sec-index">
+            <span class="sec-num">04<i>/04</i></span>
+            <span class="sec-name">Dudas</span>
+            <span class="sec-rule" aria-hidden="true"></span>
+            <span class="sec-meta">Respuestas cortas</span>
+          </div>
+          <div class="sec-body">
+            <h2>Lo que todos preguntan <span class="h-soft">antes de empezar.</span></h2>
+            
+          </div>
+        </header>
+
+        <div class="faq-list">
+          <details class="faq-item reveal" open>
+            <summary>
+              <span>¿Qué necesito para empezar a usar Zaldo? ¿Debo instalar algo?</span>
+              <span class="faq-icon reicon-inline" data-reicon="plus"></span>
+            </summary>
+            <div class="faq-body">
+              <p>No instalas nada ni descargas otra app. Solo abres el chat de Zaldo en WhatsApp, conectas tu cuenta CLABE de 18 dígitos una vez y ya queda funcionando.</p>
+            </div>
+          </details>
+          <details class="faq-item reveal">
+            <summary>
+              <span>¿Tengo que dar la contraseña de mi banco o mi NIP para conectar la CLABE?</span>
+              <span class="faq-icon reicon-inline" data-reicon="plus"></span>
+            </summary>
+            <div class="faq-body">
+              <p>Nunca. Solo conectas tu CLABE pública y nombre de titular para indicar a qué cuenta llegan los pagos CoDi (conectado por infraestructura bancaria vía Pey y Banxico). Jamás se piden contraseñas ni tokens bancarios.</p>
+            </div>
+          </details>
+          <details class="faq-item reveal">
+            <summary>
+              <span>¿Cómo vinculan mi número de teléfono? ¿Puedo agregar otro?</span>
+              <span class="faq-icon reicon-inline" data-reicon="plus"></span>
+            </summary>
+            <div class="faq-body">
+              <p>Como nos escribes desde tu WhatsApp, ese mismo número queda vinculado automáticamente para que solo tú autorices cobros. Si manejas un negocio o equipo, también puedes vincular otro número adicional.</p>
+            </div>
+          </details>
+          <details class="faq-item reveal">
+            <summary>
+              <span>¿Zaldo guarda mi dinero o qué pasa si me equivoco de monto?</span>
+              <span class="faq-icon reicon-inline" data-reicon="plus"></span>
+            </summary>
+            <div class="faq-body">
+              <p>El dinero cae directo en tu propia cuenta bancaria, sin intermediarios. Y antes de enviar cualquier cobro, Zaldo siempre te muestra una tarjeta con monto y concepto para que toques <strong>Confirmar</strong> o <strong>Cancelar</strong>.</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- Final Impact CTA -->
+    <section class="final-cta">
+      <div class="shell final-inner reveal">
+        <div class="final-cube-stage">
+          <img src="assets/zaldo-cube.png" alt="Zaldo Cube" class="final-cube" />
+        </div>
+        <h2>Conecta tu CLABE y empieza a cobrar hoy.</h2>
+        <p>Solo necesitas tu WhatsApp de siempre. Prueba la demo interactiva arriba paso a paso.</p>
+        <div class="hero-ctas">
+          <a href="#demo" class="btn btn-primary btn-lg">
+            Probar la demo arriba
+            <span class="reicon-inline" data-reicon="arrow-right"></span>
+          </a>
+          <a href="#como-funciona" class="btn btn-outline btn-lg">Ver los 4 pasos</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Matte Black Footer -->
+  <footer class="footer">
+    <div class="shell footer-inner">
+      <div class="footer-brand">
+        <span class="wordmark-crop footer-wordmark">
+          <img src="assets/zaldo-wordmark.jpg" alt="ZALDO" />
+        </span>
+        <p>Tu asistente de saldo y cobros CoDi en WhatsApp.</p>
+      </div>
+      <div class="footer-links">
+        <a href="#problemas">Por qué Zaldo</a>
+        <a href="#demo">Demo</a>
+        <a href="#como-funciona">Cómo se usa</a>
+        <a href="#faq">Dudas</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="reicons.js"></script>
+  <script src="scenes.js"></script>
+  <script src="app.js"></script>
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+  <script type="module" src="phone3d.js"></script>
+</body>
+</html>
