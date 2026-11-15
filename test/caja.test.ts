@@ -683,8 +683,17 @@ test("modo de prueba: la cuenta de pruebas de pey y su tope", async () => {
   // En modo de prueba nadie cobra de más: ese dinero no se devuelve.
   const store = memoryStore();
   const deps = flow(store, fakePey(), { testMaxCents: 100 });
-  const big = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 150, concept: "uñas" }])));
-  assert.ok(big.includes("modo de prueba: máximo $1.00 por cobro"));
+  // El aviso lo da la caja tal cual: el modelo no vuelve a opinar.
+  let asked = 0;
+  const big = textOf(
+    await say(deps, OWNER, async () => {
+      asked += 1;
+      if (asked > 1) return { content: "¿A qué celular te lo mando?", toolCalls: [] };
+      return { content: null, toolCalls: [call("prepare_charge", { amount: 150, concept: "uñas" })] };
+    }),
+  );
+  assert.equal(asked, 1);
+  assert.ok(big.startsWith("Esta caja está en modo de prueba: por ahora cobro máximo $1.00 por cobro"));
   assert.equal(store.listCharges(OWNER).length, 0);
   const small = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 0.01, concept: "prueba" }])));
   assert.ok(small.startsWith("Cobro por $0.01"));

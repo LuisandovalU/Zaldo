@@ -448,6 +448,9 @@ function fail(message: string): string {
   return `${FAILED}${message}`;
 }
 
+/** Un aviso de la caja que va tal cual a la persona, sin que el modelo lo reinterprete. */
+const DIRECT = "AVISO: ";
+
 /**
  * Herramientas cuyo resultado ya es el mensaje para la persona: las cifras
  * salen del libro tal cual, sin que el modelo las vuelva a escribir.
@@ -574,9 +577,7 @@ export function prepareCharge(
   }
   if (config.testMaxCents && amount > config.testMaxCents) {
     return {
-      output: fail(
-        `esta caja está en modo de prueba: máximo ${formatMxn(config.testMaxCents)} por cobro, porque el dinero va a la cuenta de pruebas de pey y no se devuelve. Ofrece cobrar ${formatMxn(config.testMaxCents)} para probar.`,
-      ),
+      output: `${DIRECT}Esta caja está en modo de prueba: por ahora cobro máximo ${formatMxn(config.testMaxCents)} por cobro, porque el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve. Para probar dime, por ejemplo: "cobra 1 centavo de prueba".`,
     };
   }
   let concept = conceptOf(raw.concept);
@@ -952,6 +953,8 @@ export async function runAgent(input: {
       if (!FINAL_TOOLS.has(call.function.name) || done.output.startsWith(FAILED)) final = false;
     }
     if (charge) return { charge, reply: null, tools };
+    const notice = outputs.find((output) => output.startsWith(DIRECT));
+    if (notice) return { charge, reply: notice.slice(DIRECT.length), tools };
     // Todo salió bien y el resultado ya es el mensaje: se manda tal cual, con sus cifras exactas.
     if (final) return { charge, reply: outputs.join("\n"), tools };
   }
