@@ -1,17 +1,30 @@
 # Zaldo
 
-Asistente de saldo en WhatsApp. Le escribes o le mandas una nota de voz, confirma con un botón y cobra con CoDi por la API de Pey. El dinero cae en la cuenta ligada a la API key. Zaldo solo apunta y avisa cuando el webhook dice que ya se pagó.
+Punto de venta en WhatsApp. El dueño de un negocio le escribe o le manda una nota de voz: Zaldo arma el ticket con su catálogo, cobra con CoDi por la API de Pey, avisa cuando el banco confirma el pago y lleva el corte de caja. El dinero cae directo en la cuenta ligada a la API key; Zaldo nunca lo toca.
 
 Repo del equipo: https://github.com/LuisandovalU/Zaldo
 
 ## Qué hace
 
-- Nota de voz o texto.
-- Tarjeta con Confirmar y Cancelar antes de crear el cobro.
-- Push CoDi al celular. Si pides QR, manda la imagen. Si pides link, manda la página de pago.
-- «Ya cayó» cuando Pey avisa.
-- Contactos, repetir un cobro, apuntes que no mueven dinero y «¿cómo va mi zaldo?».
-- Tope diario. Otro celular, si hay lista, no crea cobros.
+- **Catálogo:** «agrega corte a 150», «sube el gel a 250», «qué vendo».
+- **Venta por ticket:** «cobra 2 acrílicas y un gel». Los precios y el total salen del catálogo, no del modelo.
+- **Tres formas de cobrar con CoDi:** QR para el cliente que está enfrente, notificación al celular del cliente, o link de pago (CoDi o tarjeta).
+- **Tarjeta con Confirmar y Cancelar** antes de crear cualquier cobro, con el desglose y a quién le llega.
+- **«Ya cayó»** cuando Pey confirma el pago: por webhook y, si el webhook no llega, consultando a Pey cada 30 segundos.
+- **Corte de caja** de hoy, la semana o el mes: ventas CoDi, ticket promedio, lo más vendido, efectivo, gastos, lo que queda y la meta del día.
+- **Fiado:** «Ana me quedó a deber 300». Cuando Ana paga por CoDi, su fiado se abona solo.
+- Clientes guardados, repetir un cobro, ventas en efectivo y gastos del negocio, que se apuntan sin mover dinero.
+
+## Candados
+
+El modelo conversa; la caja decide. Estas reglas viven en código, no en el prompt:
+
+- Un cobro solo lleva un monto que la persona escribió, que sale del catálogo o que es un fiado apuntado. Un precio inventado se rechaza.
+- Las cifras de cada respuesta salen del libro tal cual: el modelo no las vuelve a escribir.
+- Si el modelo dice «apuntado» sin haber guardado nada, se le obliga a hacerlo o la persona recibe un «no lo pude apuntar».
+- CONFIRMAR y CANCELAR los resuelve la caja, sin pasar por el modelo.
+- Tope diario de cobros, y no más de 3 notificaciones sin pagar al mismo celular en 24 horas.
+- El cobro va al celular del dueño solo si él lo pide («cóbrame»). Otro celular, si hay lista blanca, no crea cobros.
 
 ## Correrlo
 
@@ -31,16 +44,19 @@ Pey y WhatsApp tienen que poder llegar al servidor por HTTPS:
 
 En Meta, el token de verificación es el mismo `WHATSAPP_VERIFY_TOKEN`. En el portal de Pey, el webhook es uno solo por API key: guarda el secreto en `PEY_WEBHOOK_SECRET`.
 
-Mientras Banxico activa la cuenta (unos 5 días), la key de prueba apunta a la CLABE de pruebas. Cobra $0.01.
+La API key tiene que tener una cuenta CoDi ligada y activa (portal de Pey: Finanzas para registrar la CLABE, Desarrolladores para ligarla a la llave). Sin eso, Pey responde `INVALID_STATE: API key does not have CoDi enabled` y Zaldo se lo explica a quien cobra. Mientras Banxico activa la cuenta propia (unos 5 días hábiles), la documentación de Pey da una CLABE de pruebas que se activa al momento. Cobra $0.01.
 
 ## Demo
 
-Desde el número de prueba de WhatsApp:
+Desde WhatsApp:
 
-1. Nota de voz: «Zaldo, cóbrame un centavo de prueba.»
-2. Confirmar.
-3. Pagar el push en la app del banco.
-4. Zaldo contesta: «Ya cayó, $0.01 de ti · Prueba.»
+1. «Agrega corte a 150 y tinte a 450.»
+2. «Cobra un corte y un tinte.» Zaldo contesta la tarjeta con el desglose y el total, $600.00.
+3. Confirmar. Llega el QR CoDi; el cliente lo escanea desde la app de su banco.
+4. Zaldo contesta: «Ya cayó: $600.00 · 1 corte, 1 tinte. Confirmado por CoDi.»
+5. «Corte.» Zaldo manda las ventas del día, el ticket promedio y lo más vendido.
+
+Para probar sin cliente: «cóbrame a mí un centavo de prueba» manda la notificación al celular de quien escribe.
 
 ## Panel administrador
 

@@ -8,6 +8,13 @@ export type ChargeStatus =
   | "cancelled"
   | "failed";
 
+/** Un renglón del ticket: 2 × uñas acrílicas a $350.00. */
+export interface ChargeItem {
+  name: string;
+  qty: number;
+  unitCents: number;
+}
+
 export interface Charge {
   id: string;
   owner: string;
@@ -27,16 +34,46 @@ export interface Charge {
   paidAt: number | null;
   expiryNotified: boolean;
   paidNoticeSent: boolean;
+  /** El ticket, cuando la venta salió del catálogo. */
+  items?: ChargeItem[];
 }
+
+/**
+ * Lo que la caja apunta sin mover dinero.
+ * gasto: salida del negocio, con categoría. ingreso: venta en efectivo u otra entrada.
+ * deuda: fiado, un cliente le debe al negocio. debo: el negocio le debe a alguien.
+ * Las deudas se van saldando con paidCents.
+ */
+export type NoteKind = "gasto" | "ingreso" | "deuda" | "debo";
 
 export interface Note {
   id: string;
   owner: string;
-  kind: "gasto" | "deuda" | "ingreso";
+  kind: NoteKind;
   amountCents: number;
   concept: string;
   who: string | null;
   createdAt: number;
+  category?: string | null;
+  /** Lo ya pagado de una deuda. Saldada cuando llega a amountCents. */
+  paidCents?: number;
+}
+
+/** Un producto o servicio del catálogo, con su precio. */
+export interface Product {
+  owner: string;
+  name: string;
+  priceCents: number;
+}
+
+export interface Profile {
+  owner: string;
+  name: string | null;
+  phone: string | null;
+  /** Nombre del negocio: sale en el corte de caja. */
+  business?: string | null;
+  /** Meta de venta diaria. */
+  dailyGoalCents?: number | null;
 }
 
 export interface Contact {
@@ -45,10 +82,18 @@ export interface Contact {
   phone: string;
 }
 
+/** Una herramienta que el agente usó en un turno: así recuerda que las cosas se hacen llamándolas. */
+export interface TurnTool {
+  name: string;
+  args: string;
+  output: string;
+}
+
 export interface Turn {
   role: "user" | "assistant";
   content: string;
   at: number;
+  tools?: TurnTool[];
 }
 
 interface Data {
@@ -57,19 +102,26 @@ interface Data {
   contacts: Contact[];
   turns: Record<string, Turn[]>;
   claims: Record<string, "open" | "done">;
+  products: Product[];
+  profiles: Profile[];
 }
 
 function empty(): Data {
-  return { charges: [], notes: [], contacts: [], turns: {}, claims: {} };
+  return { charges: [], notes: [], contacts: [], turns: {}, claims: {}, products: [], profiles: [] };
 }
 
 export class Store {
   private tail: Promise<unknown> = Promise.resolve();
 
+  private data: Data;
+
   constructor(
-    private data: Data = empty(),
+    data: Partial<Data> = {},
     private persist: (() => void) | null = null,
-  ) {}
+  ) {
+    // Un archivo de antes no trae catálogo ni perfiles: se completan vacíos.
+    this.data = { ...empty(), ...data };
+  }
 
   async tx<T>(fn: () => T): Promise<T> {
     const run = this.tail.then(() => fn());
@@ -158,6 +210,60 @@ export class Store {
     return this.data.notes.filter((item) => item.owner === owner);
   }
 
+  updateNote(note: Note): void {
+    const index = this.data.notes.findIndex((item) => item.id === note.id);
+    if (index === -1) throw new Error(`Apunte desconocido ${note.id}`);
+    this.data.notes[index] = note;
+    this.save();
+  }
+
+  removeNote(id: string): Note | null {
+    const index = this.data.notes.findIndex((item) => item.id === id);
+    if (index === -1) return null;
+    const [removed] = this.data.notes.splice(index, 1);
+    this.save();
+    return removed ?? null;
+  }
+
+  listProducts(owner: string): Product[] {
+    return this.data.products.filter((item) => item.owner === owner);
+  }
+
+  /** priceCents 0 lo quita del catálogo. */
+  setProduct(product: Product): void {
+    const key = fold(product.name);
+    this.data.products = this.data.products.filter(
+      (item) => !(item.owner === product.owner && fold(item.name) === key),
+    );
+    if (product.priceCents > 0) this.data.products.push({ ...product, name: product.name.trim() });
+    this.save();
+  }
+
+  /** Por nombre exacto; si no, el único producto que lo contiene ("acrílicas" → "uñas acrílicas"). */
+  findProduct(owner: string, name: string): Product | null {
+    const key = fold(name);
+    if (!key) return null;
+    const mine = this.listProducts(owner);
+    const exact = mine.find((item) => fold(item.name) === key);
+    if (exact) return exact;
+    const singular = key.replace(/(es|s)$/, "");
+    const close = mine.filter((item) => {
+      const candidate = fold(item.name);
+      return candidate.includes(key) || key.includes(candidate) || (singular.length >= 3 && candidate.includes(singular));
+    });
+    return close.length === 1 ? (close[0] ?? null) : null;
+  }
+
+  getProfile(owner: string): Profile {
+    return this.data.profiles.find((item) => item.owner === owner) ?? { owner, name: null, phone: null };
+  }
+
+  setProfile(profile: Profile): void {
+    this.data.profiles = this.data.profiles.filter((item) => item.owner !== profile.owner);
+    this.data.profiles.push(profile);
+    this.save();
+  }
+
   upsertContact(contact: Contact): void {
     const key = contact.name.trim().toLocaleLowerCase("es-MX");
     const index = this.data.contacts.findIndex(
@@ -191,6 +297,16 @@ export class Store {
   recentTurns(owner: string): Turn[] {
     return this.data.turns[owner] ?? [];
   }
+}
+
+/** Sin acentos, sin mayúsculas y con un solo espacio: para comparar nombres. */
+export function fold(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("es-MX");
 }
 
 export function memoryStore(): Store {

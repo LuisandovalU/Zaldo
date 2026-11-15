@@ -21,8 +21,9 @@ const METHOD_LABEL: Record<Charge["method"], string> = {
 
 const NOTE_LABEL: Record<Note["kind"], string> = {
   gasto: "Gasto",
-  deuda: "Deuda",
-  ingreso: "Ingreso",
+  deuda: "Fiado",
+  ingreso: "Efectivo",
+  debo: "Debe",
 };
 
 const dateTime = new Intl.DateTimeFormat("es-MX", {

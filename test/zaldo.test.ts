@@ -166,8 +166,8 @@ test("preparar un cobro no llama a Pey y el botón sí lo envía una sola vez", 
 test("cancelar no llama a Pey y el mismo mensaje no se procesa dos veces", async () => {
   const store = memoryStore();
   const pey = fakePey();
-  const flow = deps(store, pey, tool("prepare_charge", { amount: 80, concept: "Tacos" }));
-  const card = await messages(flow, { type: "text", owner: OWNER, messageId: "m1", text: "cóbame los tacos" });
+  const flow = deps(store, pey, tool("prepare_charge", { amount: 80, concept: "Tacos", payerName: "yo" }));
+  const card = await messages(flow, { type: "text", owner: OWNER, messageId: "m1", text: "cóbrame 80 de tacos" });
   if (card[0]?.kind !== "buttons") throw new Error("esperaba botones");
   assert.equal(store.listCharges(OWNER)[0]?.payerPhone, "5511111111");
   const cancelled = await messages(flow, { type: "button", owner: OWNER, messageId: "m2", buttonId: card[0].noId });
@@ -234,7 +234,7 @@ test("el tope, la lista blanca, la nota de voz, el QR y el link", async () => {
 
   const images = memoryStore();
   const qrFlow = deps(images, pey, tool("prepare_charge", { amount: 40, concept: "QR", method: "qr" }));
-  const qrCard = await messages(qrFlow, { type: "text", owner: OWNER, messageId: "q1", text: "manda qr" });
+  const qrCard = await messages(qrFlow, { type: "text", owner: OWNER, messageId: "q1", text: "manda qr de 40" });
   if (qrCard[0]?.kind !== "buttons") throw new Error("esperaba botones");
   const image = await messages(qrFlow, { type: "button", owner: OWNER, messageId: "q2", buttonId: qrCard[0].yesId });
   assert.equal(pey.qrs.length, 1);
@@ -242,7 +242,7 @@ test("el tope, la lista blanca, la nota de voz, el QR y el link", async () => {
 
   const links = memoryStore();
   const linkFlow = deps(links, pey, tool("prepare_charge", { amount: 90, concept: "Tarjeta", method: "link" }));
-  const linkCard = await messages(linkFlow, { type: "text", owner: OWNER, messageId: "l1", text: "manda link" });
+  const linkCard = await messages(linkFlow, { type: "text", owner: OWNER, messageId: "l1", text: "manda link de 90" });
   if (linkCard[0]?.kind !== "buttons") throw new Error("esperaba botones");
   const link = await messages(linkFlow, { type: "button", owner: OWNER, messageId: "l2", buttonId: linkCard[0].yesId });
   assert.equal(pey.links.length, 1);
@@ -261,7 +261,7 @@ test("repetir, apuntar y el saldo no mueven dinero", async () => {
   const store = memoryStore();
   const pey = fakePey();
   const flow = deps(store, pey, tool("prepare_charge", { amount: 20, concept: "Pan", payerName: "Luis", payerPhone: "5510000000" }));
-  await messages(flow, { type: "text", owner: OWNER, messageId: "r1", text: "cobra" });
+  await messages(flow, { type: "text", owner: OWNER, messageId: "r1", text: "cobra 20 de pan" });
   flow.complete = tool("repeat_charge", { payerName: "Luis" });
   const again = await messages(flow, { type: "text", owner: OWNER, messageId: "r2", text: "otra vez" });
   assert.equal(again[0]?.kind, "buttons");
@@ -273,14 +273,14 @@ test("repetir, apuntar y el saldo no mueven dinero", async () => {
   assert.match(note[0] && note[0].kind === "text" ? note[0].text : "", /Apuntado/);
   flow.complete = toolOnce("get_balance", {});
   const balance = await messages(flow, { type: "text", owner: OWNER, messageId: "n2", text: "zaldo" });
-  assert.match(balance[0] && balance[0].kind === "text" ? balance[0].text : "", /Gastos apuntados hoy: \$200\.00/);
+  assert.match(balance[0] && balance[0].kind === "text" ? balance[0].text : "", /Gastos: \$200\.00/);
 });
 
 test("un cobro pendiente vence y un archivo guarda el libro", async () => {
   const store = memoryStore();
   const pey = fakePey();
-  const flow = deps(store, pey, tool("prepare_charge", { amount: 5, concept: "Agua" }));
-  const card = await messages(flow, { type: "text", owner: OWNER, messageId: "e1", text: "cobra" });
+  const flow = deps(store, pey, tool("prepare_charge", { amount: 5, concept: "Agua", payerName: "yo" }));
+  const card = await messages(flow, { type: "text", owner: OWNER, messageId: "e1", text: "cóbrame 5 de agua" });
   if (card[0]?.kind !== "buttons") throw new Error("esperaba botones");
   await messages(flow, { type: "button", owner: OWNER, messageId: "e2", buttonId: card[0].yesId });
   const notices = takeExpired(store, NOW + 360 * 1000);

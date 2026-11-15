@@ -164,6 +164,44 @@ function parseTransactionPage(body: Record<string, unknown>): PeyTransactionPage
   return { items, nextToken: optionalString(body.nextToken) };
 }
 
+/**
+ * Un error de Pey con su `type` (INVALID_STATE, INVALID_AMOUNT…) y el
+ * requestId para soporte. Pey responde {"error": {message, type, requestId}}.
+ */
+export class PeyError extends Error {
+  constructor(
+    message: string,
+    readonly type: string | null,
+    readonly status: number,
+    readonly requestId: string | null,
+  ) {
+    super(message);
+    this.name = "PeyError";
+  }
+}
+
+/** Arma el error a partir del cuerpo, venga como venga. */
+export function peyErrorFrom(status: number, body: Record<string, unknown>): PeyError {
+  const error = asRecord(body.error);
+  const message =
+    optionalString(error?.message) ??
+    optionalString(body.message) ??
+    optionalString(body.error) ??
+    `Pey respondió ${status}`;
+  const type = optionalString(error?.type) ?? optionalString(body.type);
+  const requestId = optionalString(error?.requestId) ?? optionalString(body.requestId);
+  return new PeyError(message.slice(0, 180), type, status, requestId);
+}
+
+export type PaymentLinkStatus = "pending" | "processing" | "paid" | "partial";
+
+export interface PeyPaymentLink {
+  id: string;
+  status: PaymentLinkStatus;
+  /** Milisegundos del primer pago, si ya hay uno. */
+  datePaid: number | null;
+}
+
 export class PeyClient {
   constructor(
     private readonly base: string,
@@ -236,6 +274,26 @@ export class PeyClient {
     return parseTransaction(body);
   }
 
+  /** GET /transaction/codi/qr/{idc}: los pagos que ha recibido un QR, lo más nuevo primero. */
+  async qrTransactions(idc: string): Promise<PeyTransactionPage> {
+    const body = await this.get(`/transaction/codi/qr/${encodeURIComponent(idc)}`, [404]);
+    if (body.__notFound === true) return { items: [], nextToken: null };
+    return parseTransactionPage(body);
+  }
+
+  /** GET /payment-link/{id}: el estado de un link, sin esperar el webhook. */
+  async paymentLink(id: string): Promise<PeyPaymentLink | null> {
+    const body = await this.get(`/payment-link/${encodeURIComponent(id)}`, [404]);
+    if (body.__notFound === true) return null;
+    const status = body.status;
+    const first = Array.isArray(body.transactions) ? asRecord(body.transactions[0]) : null;
+    return {
+      id: optionalString(body.id) ?? id,
+      status: status === "paid" || status === "processing" || status === "partial" ? status : "pending",
+      datePaid: first ? epochSeconds(first.datePaid) : null,
+    };
+  }
+
   /** GET /bank-account/{id}: sirve para ver si Banxico ya activó la cuenta. */
   async bankAccount(id: string): Promise<PeyBankAccount | null> {
     const body = await this.get(`/bank-account/${encodeURIComponent(id)}`, [404]);
@@ -257,59 +315,49 @@ export class PeyClient {
     };
   }
 
-  private async get(path: string, tolerate: number[] = []): Promise<Record<string, unknown>> {
-    const response = await this.fetchImpl(`${this.base}${path}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        Accept: "application/json",
-      },
-      signal: AbortSignal.timeout(20_000),
-    });
+  private get(path: string, tolerate: number[] = []): Promise<Record<string, unknown>> {
+    return this.request("GET", path, undefined, tolerate);
+  }
+
+  private post(path: string, payload: unknown): Promise<Record<string, unknown>> {
+    return this.request("POST", path, payload, []);
+  }
+
+  private async request(
+    method: "GET" | "POST",
+    path: string,
+    payload: unknown,
+    tolerate: number[],
+  ): Promise<Record<string, unknown>> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.base}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          Accept: "application/json",
+          ...(payload === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: payload === undefined ? undefined : JSON.stringify(payload),
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch (error) {
+      // Sin respuesta (red caída o 20 s sin contestar): no sabemos si Pey lo recibió.
+      const reason = error instanceof Error ? error.message : "sin respuesta";
+      throw new PeyError(`Pey no respondió (${reason.slice(0, 80)})`, "NETWORK", 0, null);
+    }
     const text = await response.text();
     let body: Record<string, unknown> = {};
     if (text) {
       try {
-        body = JSON.parse(text) as Record<string, unknown>;
+        const parsed = JSON.parse(text) as unknown;
+        body = asRecord(parsed) ?? {};
       } catch {
         body = { message: text.slice(0, 180) };
       }
     }
     if (tolerate.includes(response.status)) return { __notFound: true };
-    if (!response.ok) {
-      const error = asRecord(body.error);
-      const message = String(
-        error?.message ?? body.message ?? body.error ?? `Pey respondió ${response.status}`,
-      );
-      throw new Error(message.slice(0, 180));
-    }
-    return body;
-  }
-
-  private async post(path: string, payload: unknown): Promise<Record<string, unknown>> {
-    const response = await this.fetchImpl(`${this.base}${path}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(20_000),
-    });
-    const text = await response.text();
-    let body: Record<string, unknown> = {};
-    if (text) {
-      try {
-        body = JSON.parse(text) as Record<string, unknown>;
-      } catch {
-        body = { message: text.slice(0, 180) };
-      }
-    }
-    if (!response.ok) {
-      const message = String(body.message ?? body.error ?? `Pey respondió ${response.status}`);
-      throw new Error(message.slice(0, 180));
-    }
+    if (!response.ok) throw peyErrorFrom(response.status, body);
     return body;
   }
 }

@@ -5,7 +5,15 @@ import type { AuthConfig } from "./auth/config.js";
 import { handleAuthRoutes } from "./auth/routes.js";
 import type { AuthService } from "./auth/service.js";
 import type { AppConfig } from "./config.js";
-import { ackInbound, applyPeyEvent, handleInbound, releaseInbound, takeExpired, type FlowDeps } from "./flows.js";
+import {
+  ackInbound,
+  applyPeyEvent,
+  handleInbound,
+  reconcilePending,
+  releaseInbound,
+  takeExpired,
+  type FlowDeps,
+} from "./flows.js";
 import type { Outbound } from "./inbound.js";
 import { serveLanding } from "./landing.js";
 import { verifyPeyWebhook } from "./peyWebhook.js";
@@ -177,6 +185,12 @@ export function startSweeper(deps: FlowDeps, whatsapp: WhatsApp, auth?: AuthServ
     void (async () => {
       try {
         auth?.sweep(deps.now());
+        // Primero se le pregunta a Pey: un cobro ya pagado no se da por vencido.
+        for (const paid of await reconcilePending(deps)) {
+          await whatsapp.sendText(paid.owner, paid.text);
+          const current = deps.store.getCharge(paid.chargeId);
+          if (current) deps.store.updateCharge({ ...current, paidNoticeSent: true });
+        }
         const notices = takeExpired(deps.store, deps.now());
         for (const notice of notices) await whatsapp.sendText(notice.owner, notice.text);
       } catch (error) {
