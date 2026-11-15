@@ -84,14 +84,21 @@ const PAGE_BACK = `<!doctype html><meta charset="utf-8"><title>Zaldo</title><bod
  * respuesta rápida), "poll" (encuesta, se ve en cualquier WhatsApp) o "text".
  * Se cambia aquí y se publica: no hace falta tocar el servidor.
  */
-type ChoiceStyle = "buttons" | "poll" | "text";
+/**
+ * "both": el texto de siempre y, además, los botones. Es lo que recibe un chat
+ * que todavía no ha tocado ninguno: si su WhatsApp no pinta botones, no pierde
+ * nada. En cuanto toca uno, ese chat pasa a "buttons": un solo mensaje, limpio.
+ */
+type ChoiceStyle = "buttons" | "poll" | "text" | "both";
 const CHOICE_STYLE: ChoiceStyle =
-  process.env.ZALDO_CHOICE_STYLE === "buttons" || process.env.ZALDO_CHOICE_STYLE === "poll" ? process.env.ZALDO_CHOICE_STYLE : "text";
+  process.env.ZALDO_CHOICE_STYLE === "buttons" || process.env.ZALDO_CHOICE_STYLE === "poll" || process.env.ZALDO_CHOICE_STYLE === "text"
+    ? process.env.ZALDO_CHOICE_STYLE
+    : "both";
 
 interface BridgeChoice {
   text: string;
   options: { id: string; label: string }[];
-  style: ChoiceStyle;
+  style: "buttons" | "poll" | "text";
   /** Lo que se manda como texto si el WhatsApp de la persona no puede enseñar botones. */
   fallback: string;
 }
@@ -118,6 +125,8 @@ export function asReplies(
         { id: message.yesId, label: "Confirmar" },
         { id: message.noId, label: "Cancelar" },
       ];
+      // Texto y botones: la tarjeta completa como siempre, y debajo los dos botones.
+      if (style === "both") return [fallback, { choice: { text: CARD_QUESTION, options, style: "buttons", fallback: "" } }];
       // En encuesta, la tarjeta va como mensaje y abajo solo la pregunta con sus dos opciones.
       if (style === "poll") {
         return [card, { choice: { text: CARD_QUESTION, options, style, fallback: "Responde *CONFIRMAR* o *CANCELAR*" } }];
@@ -130,6 +139,9 @@ export function asReplies(
       const fallback = `${question}\n\n${optionList(message.options.map((option) => option.label))}`;
       const style = message.style ?? styleFor(message.to);
       if (!canChoose || style === "text") return [fallback];
+      if (style === "both") {
+        return [fallback, { choice: { text: "Toca una opción:", options: message.options, style: "buttons", fallback: "" } }];
+      }
       // El título de una encuesta no admite formato: va el texto tal cual.
       return [{ choice: { text: style === "poll" ? message.text : question, options: message.options, style, fallback } }];
     }
@@ -351,6 +363,11 @@ export function createZaldo(host: CoreHost): ZaldoCore {
     const canChoose = Array.isArray(body.caps) && body.caps.includes("choice");
     // Un botón tocado: el de la tarjeta (c:/x:) va directo a la caja; el de una pregunta es su texto.
     const button = typeof body.button === "string" ? body.button.slice(0, 300) : "";
+    // Tocó un botón: en su WhatsApp sí se ven. Desde aquí, ese chat recibe solo botones.
+    if (button) {
+      const profile = store.getProfile(from);
+      if (profile.choiceStyle !== "buttons") store.setProfile({ ...profile, choiceStyle: "buttons" });
+    }
     const handled = await handleInbound(
       flows,
       /^[cx]:[0-9a-f-]{36}$/i.test(button)
@@ -359,10 +376,11 @@ export function createZaldo(host: CoreHost): ZaldoCore {
           { type: "text", owner: from, messageId, text: text || (button.startsWith("o:") ? button.slice(2) : "") },
     );
     if (handled.claimed) ackInbound(store, messageId);
-    return json(200, { replies: asReplies(handled.messages, canChoose, (owner) =>
-        // Botones solo para quien ya comprobó que los ve. La encuesta no: su voto llega cifrado y no siempre se puede abrir.
-        store.getProfile(owner).choiceStyle === "buttons" ? "buttons" : CHOICE_STYLE,
-      ) });
+    return json(200, { replies: asReplies(handled.messages, canChoose, (owner) => {
+        // Solo botones para quien ya tocó uno; solo texto para quien pidió "sin botones"; los demás, las dos cosas.
+        const own = store.getProfile(owner).choiceStyle;
+        return own === "buttons" ? "buttons" : own === "text" || own === "poll" ? "text" : CHOICE_STYLE;
+      }) });
   }
 
   async function metaWebhook(request: CoreRequest): Promise<CoreReply> {

@@ -641,6 +641,39 @@ async function ownerPayments(deps: FlowDeps, owner: string): Promise<PeyTransact
   return mine;
 }
 
+const REGISTER = "Registrar mi cuenta";
+const KEEP_DEMO_LABEL = "Seguir en demo";
+const KEEP_DEMO = /^seguir en (la |el )?(modo )?demo[\s.!]*$/i;
+
+function choices(labels: string[]): { id: string; label: string }[] {
+  return labels.map((label) => ({ id: `o:${label}`, label }));
+}
+
+/**
+ * La bienvenida de quien llega: en cuanto dice su nombre se le explica, una
+ * sola vez, que está en modo demo, y se le ofrecen dos caminos con botones:
+ * registrar su cuenta para cobrar de verdad, o seguir probando.
+ */
+function demoWelcome(deps: FlowDeps, owner: string, nameBefore: string | null, now: number, tools: TurnTool[]): Outbound[] | null {
+  const profile = deps.store.getProfile(owner);
+  if (nameBefore || !profile.name || profile.onboarded) return null;
+  deps.store.setProfile({ ...profile, onboarded: true });
+  const cap = testCapFor(deps.store, deps.config, owner);
+  // Quien ya recibe en su propio banco no está en demo: no hay nada que explicar.
+  if (!cap) return null;
+  const text = [
+    `¡Mucho gusto, ${profile.name}!`,
+    "",
+    `Estás en *modo demo*: puedes probar todo, con cobros de hasta *${formatMxn(cap)}*. Ese dinero va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve.`,
+    "",
+    "Para cobrar de verdad y recibir en tu banco, registra tu cuenta: toma un minuto.",
+    "",
+    "¿Cómo seguimos?",
+  ].join("\n");
+  remember(deps.store, owner, "assistant", text, now, tools);
+  return [{ kind: "choice", to: owner, text, options: choices([REGISTER, KEEP_DEMO_LABEL]) }];
+}
+
 const TRY_BUTTONS = /^(probar|prueba de|prueba|activar?|quiero|pon|ponme|usa) (los )?botones[\s.!]*$/i;
 const SEES_BUTTONS = "Sí veo los botones";
 const NO_BUTTONS = /^(sin botones|no los veo|no veo( los)? botones|quitar? (los )?botones)[\s.!]*$/i;
@@ -678,8 +711,15 @@ function buttonTest(deps: FlowDeps, owner: string, clean: string, now: number): 
     remember(deps.store, owner, "assistant", text, now);
     return [{ kind: "text", to: owner, text }];
   }
+  // "Seguir en demo": el siguiente paso es probar un cobro de verdad, de un centavo.
+  if (KEEP_DEMO.test(clean)) {
+    const text =
+      "Va, seguimos en *modo demo*.\n\nLo mejor para probar: un cobro de un centavo a tu propio celular. Te llega a la app de tu banco, lo aceptas y ves cómo te aviso cuando cae.";
+    remember(deps.store, owner, "assistant", text, now);
+    return [{ kind: "choice", to: owner, text, options: choices(["Cobrarme 1 centavo", "¿Qué puedes hacer?"]) }];
+  }
   if (NO_BUTTONS.test(clean)) {
-    deps.store.setProfile({ ...profile, choiceStyle: "poll" });
+    deps.store.setProfile({ ...profile, choiceStyle: "text" });
     const text = "Va, sin botones: te escribo las opciones y me contestas con la que quieras.";
     remember(deps.store, owner, "assistant", text, now);
     return [{ kind: "text", to: owner, text }];
@@ -705,6 +745,7 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
   remember(deps.store, owner, "user", clean, now);
   const tested = buttonTest(deps, owner, clean, now);
   if (tested) return tested;
+  const nameBefore = deps.store.getProfile(owner).name;
   const direct = shortcut(clean);
   let result: Awaited<ReturnType<typeof runAgent>>;
   try {
@@ -729,6 +770,9 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
     remember(deps.store, owner, "assistant", reply, now);
     return [{ kind: "text", to: owner, text: reply }];
   }
+  // Acaba de decir cómo se llama: es el momento de explicarle dónde está parado.
+  const welcome = !result.charge && !result.confirm ? demoWelcome(deps, owner, nameBefore, now, result.tools) : null;
+  if (welcome) return welcome;
   const notice = result.notice?.trim();
   if (result.charge) {
     const card = chargeCard(result.charge, !!testCapFor(deps.store, deps.config, owner), now);

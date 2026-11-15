@@ -232,7 +232,7 @@ test("por el puente: botones si esa persona ya comprobó que los ve; si no, opci
 
   // Y si un día no los ve: "sin botones".
   await say(deps, "sin botones", calls());
-  assert.equal(store.getProfile(OWNER).choiceStyle, "poll");
+  assert.equal(store.getProfile(OWNER).choiceStyle, "text");
 });
 
 test("si lo que piden cabe en dos productos del catálogo, la caja pregunta cuál", async () => {
@@ -261,4 +261,64 @@ test("si lo que piden cabe en dos productos del catálogo, la caja pregunta cuá
   assert.equal(full.some((message) => message.kind === "buttons"), true);
   const plain = await say(deps, "cobra un tinte", calls(["prepare_charge", { items: [{ name: "tinte", qty: 1 }] }]));
   assert.equal(plain.some((message) => message.kind === "buttons"), true);
+});
+
+test("un chat que no ha tocado ningún botón recibe el texto de siempre y, además, los botones", async () => {
+  const store = memoryStore();
+  const deps = flow(store, fakePey());
+  const both = () => "both" as const;
+
+  const card = asReplies(await say(deps, "cobra 150", calls(["prepare_charge", { amount: 150 }])), true, both);
+  assert.equal(card.length, 2);
+  assert.equal(String(card[0]).endsWith("Responde *CONFIRMAR* o *CANCELAR*"), true, "si su WhatsApp no pinta botones, igual sabe qué contestar");
+  const buttons = card[1] as { choice: { text: string; style: string; options: { label: string }[] } };
+  assert.equal(buttons.choice.style, "buttons");
+  assert.equal(buttons.choice.text, "¿Mando este cobro?");
+  assert.deepEqual(
+    buttons.choice.options.map((option) => option.label),
+    ["Confirmar", "Cancelar"],
+  );
+
+  const asked = asReplies(await say(deps, "cobra 100 o 150, no me acuerdo", calls(["prepare_charge", { amount: 100 }])), true, both);
+  assert.equal(asked[0], "¿Cuál de los dos cobro?\n\n- *$100.00*\n- *$150.00*");
+  assert.equal((asked[1] as { choice: { style: string } }).choice.style, "buttons");
+});
+
+test("quien llega dice su nombre y se le explica el modo demo, con dos caminos", async () => {
+  const store = memoryStore();
+  const deps = flow(store, fakePey());
+  deps.config = { ...deps.config, peyBankAccountId: "acct_pruebas", testMaxCents: 100 };
+
+  await say(deps, "hola", async () => ({ content: "¡Qué onda! Soy Zaldo. ¿Cómo te llamas?", toolCalls: [] }));
+  const welcome = choiceIn(await say(deps, "Alejandro", calls(["set_profile", { name: "Alejandro" }])));
+  assert.equal(welcome.text.startsWith("¡Mucho gusto, Alejandro!"), true);
+  assert.match(welcome.text, /Estás en \*modo demo\*: puedes probar todo, con cobros de hasta \*\$1\.00\*/);
+  assert.match(welcome.text, /¿Cómo seguimos\?$/);
+  assert.deepEqual(
+    welcome.options.map((option) => option.label),
+    ["Registrar mi cuenta", "Seguir en demo"],
+  );
+  assert.equal(store.getProfile(OWNER).onboarded, true);
+
+  // "Seguir en demo": el siguiente paso, también con botones.
+  const next = choiceIn(await send(deps, { type: "button", buttonId: welcome.options[1]!.id }));
+  assert.match(next.text, /^Va, seguimos en \*modo demo\*\./);
+  assert.deepEqual(
+    next.options.map((option) => option.label),
+    ["Cobrarme 1 centavo", "¿Qué puedes hacer?"],
+  );
+  // "Cobrarme 1 centavo" es un cobro a su propio celular, por un centavo.
+  const card = await send(deps, { type: "button", buttonId: next.options[0]!.id }, calls(["prepare_charge", { amount: 1 }]));
+  const charge = store.listCharges(OWNER)[0];
+  assert.equal(card.some((message) => message.kind === "buttons"), true);
+  assert.equal(charge?.amountCents, 1);
+  assert.equal(charge?.method, "push");
+
+  // La bienvenida sale una sola vez, y nunca a quien ya recibe en su propio banco.
+  const again = await say(deps, "me llamo Alex", calls(["set_profile", { name: "Alex" }]));
+  assert.equal(again.some((message) => message.kind === "choice"), false);
+  const real = memoryStore();
+  const realDeps = flow(real, fakePey());
+  const plain = await say(realDeps, "Alejandro", calls(["set_profile", { name: "Alejandro" }]));
+  assert.equal(plain.some((message) => message.kind === "choice"), false);
 });

@@ -433,7 +433,7 @@ test("un chat sin número pide el celular una sola vez", async () => {
   assert.match(named, /se llama Isabel/);
   const shop = textOf(await say(deps, LID, calls(["set_business", { business: "Uñas Isa", dailyGoal: 2000 }])));
   assert.equal(shop, "Tu negocio: Uñas Isa. Meta del día: $0.00 de $2,000.00 (0%), faltan $2,000.00.");
-  assert.deepEqual(store.getProfile(LID), { owner: LID, name: "Isabel", phone: "3322054352", business: "Uñas Isa", dailyGoalCents: 200_000 });
+  assert.deepEqual(store.getProfile(LID), { owner: LID, name: "Isabel", phone: "3322054352", business: "Uñas Isa", dailyGoalCents: 200_000, onboarded: true });
 });
 
 test("no se bombardea un celular: tres cobros sin pagar y Zaldo frena", async () => {

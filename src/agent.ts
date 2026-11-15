@@ -899,7 +899,7 @@ function askedForQr(texts: string[]): boolean {
 }
 
 const SELF_WORDS =
-  /(c[oó]brame|c[oó]bramelo|a mí(?![a-záéíóúñ])|a mi(?=\s*($|[.,;!?]|\d))|a mi mism[oa]|quiero pagar|voy a pagar|me (lo |la )?cobras|yo pago|pago yo|hacer un pago|a mi (propio )?(celular|cel|n[uú]mero))/i;
+  /(c[oó]brame|c[oó]bramelo|cobrarme|a mí(?![a-záéíóúñ])|a mi(?=\s*($|[.,;!?]|\d))|a mi mism[oa]|quiero pagar|voy a pagar|me (lo |la )?cobras|yo pago|pago yo|hacer un pago|a mi (propio )?(celular|cel|n[uú]mero))/i;
 
 /** ¿Quien escribe pidió que el cobro le llegue a él ("cóbrame", "quiero pagar")? */
 function askedForSelf(store: Store, owner: string): boolean {
