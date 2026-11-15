@@ -82,8 +82,9 @@ function remember(
   content: string,
   now: number,
   tools: TurnTool[] = [],
+  cardOf?: string,
 ): void {
-  store.appendTurn(owner, { role, content, at: now, ...(tools.length ? { tools } : {}) });
+  store.appendTurn(owner, { role, content, at: now, ...(tools.length ? { tools } : {}), ...(cardOf ? { cardOf } : {}) });
 }
 
 /** CoDi muestra un concepto corto en la app del banco: se manda recortado, el libro guarda el completo. */
@@ -334,22 +335,61 @@ const EXPLICIT = /^(confirmar|confirma|confirmo|cancelar|cancela|cancelo)[.!]*$/
 
 /**
  * Con una tarjeta por confirmar, la gente no escribe "CONFIRMAR": escribe "sí,
- * mándalo", "va, dale" o "ya no, gracias". Solo cuentan mensajes cortos, sin
- * números y sin un "pero" o un "mejor" que cambien el cobro.
+ * mándalo", "órale" o "ya no, gracias". Aquí se manda dinero, así que la
+ * lectura es estricta: el mensaje ENTERO tiene que ser de palabras de sí (o
+ * de no) y muletillas. Una sola palabra de más ("si quieres", "ok, cancélalo",
+ * "mándalo mañana", cualquier pregunta) y no se decide aquí.
  */
-const YES_PHRASE =
-  /^(s[ií]+|sip|simon|sim[oó]n|va|vas|dale|ok|okay|okey|sale|claro|correcto|exacto|adelante|listo|as[ií] es|de acuerdo|est[aá] bien|confirm\w*|m[aá]ndal[oa]|env[ií]al[oa]|h[aá]zlo|c[oó]bral[oa]|[eé]chal[eo])(?![a-záéíóúñ])/i;
-const NO_PHRASE =
-  /^(no+\b|nel\b|cancel\w*|mejor (no|cancel\w*)|ya no\b|siempre no\b|olv[ií]dal[oa]|d[eé]jal[oa]|b[oó]rral[oa]|qu[ií]tal[oa]|no lo mandes|no lo env[ií]es)/i;
-const CHANGES_IT = /\d|\bpero\b|\bmejor (que|por|con|de|un|una|el|la|a)\b|\bcambia|\bsolo que\b/i;
+const YES_WORDS = new Set([
+  "si", "sip", "sipi", "simon", "va", "vas", "dale", "ok", "okay", "okey", "oki", "sale", "claro", "correcto",
+  "exacto", "adelante", "confirmar", "confirma", "confirmo", "confirmado", "confirmalo", "mandalo", "mandaselo",
+  "mandala", "envialo", "enviaselo", "enviala", "hazlo", "cobralo", "cobraselo", "orale", "andale", "jalo", "arre",
+  "perfecto", "yes", "yep", "yeah", "eso", "mero", "echale", "aceptar", "acepto", "afirmativo", "simona",
+]);
+/** Asentimientos flojos: junto a un "no" o un "cancela", gana el no ("ok, cancélalo", "claro que no"). */
+const WEAK_YES = new Set(["ok", "okay", "okey", "oki", "sale", "claro", "va", "dale", "exacto", "correcto", "perfecto", "eso"]);
+const NO_WORDS = new Set([
+  "no", "nel", "nop", "nope", "nones", "cancelar", "cancela", "cancelo", "cancelalo", "cancelala", "cancelado",
+  "cancelacion", "olvidalo", "dejalo", "tampoco", "negativo", "nah",
+]);
+const FILLER = new Set([
+  "por", "favor", "porfa", "porfis", "plis", "please", "pues", "ya", "de", "una", "vez", "ahora", "mismo", "que",
+  "lo", "la", "le", "el", "mejor", "siempre", "y", "bien", "esta", "asi", "es", "muy", "todo", "mandes", "envies",
+  "quiero", "gracias",
+]);
+const YES_EMOJI = /[👍👌✅✔☑🆗]/u;
+const NO_EMOJI = /[👎❌✖🚫⛔]/u;
+/** Lo que cambia el sentido: una pregunta, un "después", una condición o un cambio al cobro. */
+const NOT_NOW = /[?¿]|\d|\b(despu[eé]s|luego|ma[ñn]ana|al rato|m[aá]s tarde|ahorita no|todav[ií]a|espera|esp[eé]rame|aguanta|tantito|momento|pero|cambia|c[aá]mbialo|otro|otra)\b/i;
 
-function confirmIntent(clean: string): "yes" | "no" | null {
+function plainWords(text: string): string[] {
+  return text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter(Boolean);
+}
+
+export function confirmIntent(clean: string): "yes" | "no" | null {
   if (YES.test(clean)) return "yes";
   if (NO.test(clean)) return "no";
-  if (clean.length > 40 || CHANGES_IT.test(clean)) return null;
-  if (NO_PHRASE.test(clean)) return "no";
-  if (YES_PHRASE.test(clean)) return "yes";
-  return null;
+  if (clean.length > 60 || NOT_NOW.test(clean)) return null;
+  const words = plainWords(clean);
+  const yesEmoji = YES_EMOJI.test(clean);
+  const noEmoji = NO_EMOJI.test(clean);
+  if (!words.length) return yesEmoji && !noEmoji ? "yes" : noEmoji && !yesEmoji ? "no" : null;
+  // Una palabra que no es ni sí, ni no, ni muletilla: esto ya es otra plática.
+  if (words.some((word) => !YES_WORDS.has(word) && !NO_WORDS.has(word) && !FILLER.has(word))) return null;
+  const yes = words.filter((word) => YES_WORDS.has(word));
+  const no = words.filter((word) => NO_WORDS.has(word));
+  if (no.length || noEmoji) {
+    // "ok, cancélalo" o "claro que no" es no. "no, sí mándalo" o "sí no" no se adivina.
+    return yes.every((word) => WEAK_YES.has(word)) && !yesEmoji ? "no" : null;
+  }
+  // "ya" solo no confirma nada, y un "ok, gracias" es cortesía, no una orden de mandar dinero.
+  if (words.includes("gracias")) return null;
+  return yes.length || yesEmoji ? "yes" : null;
 }
 
 /**
@@ -364,7 +404,14 @@ async function onConfirmWord(deps: FlowDeps, owner: string, clean: string): Prom
     .find((charge) => charge.status === "awaiting_confirm");
   if (waiting) {
     const intent = confirmIntent(clean);
-    return intent ? onButton(deps, owner, `${intent === "yes" ? "c" : "x"}:${waiting.id}`) : null;
+    if (!intent) return null;
+    // Un "sí" o un "no" contesta lo último que dijo Zaldo. Si después de la tarjeta
+    // hubo otra pregunta, ese "sí" no es para el cobro: solo CONFIRMAR / CANCELAR lo son.
+    const turns = deps.store.recentTurns(owner);
+    const lastBot = [...turns].reverse().find((turn) => turn.role === "assistant");
+    const cardIsLast = lastBot?.cardOf === waiting.id;
+    if (!cardIsLast && !EXPLICIT.test(clean)) return null;
+    return onButton(deps, owner, `${intent === "yes" ? "c" : "x"}:${waiting.id}`);
   }
   if (EXPLICIT.test(clean)) {
     return [{ kind: "text", to: owner, text: "No hay ningún cobro esperando confirmación. Dime qué cobro y lo armo." }];
@@ -477,7 +524,7 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
     const card = chargeCard(result.charge, !!testCapFor(deps.store, deps.config, owner), now);
     // Si en el mismo mensaje pidió algo más (guardar un producto, el corte), eso va antes de la tarjeta.
     const before = result.reply?.trim();
-    remember(deps.store, owner, "assistant", before ? `${before}\n\n${card}` : card, now, result.tools);
+    remember(deps.store, owner, "assistant", before ? `${before}\n\n${card}` : card, now, result.tools, result.charge.id);
     return [
       ...(before ? [{ kind: "text" as const, to: owner, text: before }] : []),
       {

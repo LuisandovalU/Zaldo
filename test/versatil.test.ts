@@ -614,3 +614,41 @@ test("lo que rompió el jurado simulado ya no se rompe", async () => {
   assert.equal(textOf(await say(deps, fair, "cóbrale 90 a Beto")), "¿Cuál es el celular de Beto? Son 10 dígitos.");
   assert.equal(asked, 1);
 });
+
+test("con dinero de por medio, sí es sí y lo demás no se adivina", async () => {
+  const { confirmIntent } = await import("../src/flows.js");
+  const yes = ["sí", "si", "Sí.", "sí, mándalo", "va, dale", "órale", "ándale", "👍", "✅", "sí porfa", "simón", "ok", "dale pues", "confirmado", "mándaselo", "claro que sí", "yes", "ok mándalo", "sale", "arre", "jalo", "perfecto", "CONFIRMAR"];
+  const no = ["no", "No.", "nel", "ok, cancélalo", "claro que no", "ok no", "ok cancela", "está bien, cancélalo", "sale, mejor no", "dale cancelar", "exacto, cancélalo", "así es, no lo mandes", "claro que no lo mandes", "okay no gracias", "ok ya no", "ya no, gracias", "mejor no", "cancélalo", "👎", "CANCELAR", "no gracias"];
+  const unsure = [
+    "si quieres", "sí?", "listo?", "correcto?", "vas a mandarlo?", "sí le llega a su banco?", "mándalo mañana", "cóbralo después", "hazlo después",
+    "envíalo luego", "no manches, sí mándalo", "no, sí mándalo", "sí no", "confirmo que no quiero", "confirmar cancelación", "ok gracias",
+    "listo, gracias", "ya", "gracias", "si me lo mandas a otro número", "sí pero que sean 100", "no, mejor 200", "claro, cámbialo a link",
+    "espera", "aguanta", "espérame tantito", "si Ana no quiere no", "adelante no pero luego", "no?", "sí por favor mándaselo ya que tengo prisa y se me va el cliente",
+  ];
+  for (const phrase of yes) assert.equal(confirmIntent(phrase), "yes", phrase);
+  for (const phrase of no) assert.equal(confirmIntent(phrase), "no", phrase);
+  for (const phrase of unsure) assert.equal(confirmIntent(phrase), null, phrase);
+
+  // En la conversación: "ok, cancélalo" cancela y no sale nada.
+  const store = memoryStore();
+  const pey = fakePey();
+  const deps = flow(store, pey);
+  await say(deps, calls(["prepare_charge", { amount: 100, payerName: "Ana", payerPhone: "5522223333" }]), "cóbrale 100 a Ana 5522223333");
+  assert.equal(textOf(await say(deps, never, "ok, cancélalo")), "Cancelé el cobro de $100.00. No se envió nada.");
+  assert.equal(pey.pushes.length, 0);
+
+  // Un "sí" contesta lo último que dijo Zaldo. Si después de la tarjeta hubo otra pregunta, no manda el cobro viejo.
+  await say(deps, calls(["prepare_charge", { amount: 80, payerName: "Ana", payerPhone: "5522223333" }]), "cóbrale 80 a Ana 5522223333");
+  await say(deps, async () => ({ content: "No tengo \"gringa\" en tu catálogo. ¿La agrego?", toolCalls: [] }), "y tengo gringas?");
+  let asked = 0;
+  await say(deps, async () => {
+    asked += 1;
+    return { content: "Va, dime el precio.", toolCalls: [] };
+  }, "sí");
+  assert.equal(asked, 1, "ese sí le llegó al modelo, no a la tarjeta");
+  assert.equal(pey.pushes.length, 0);
+  assert.equal(store.listCharges(OWNER).at(-1)?.status, "awaiting_confirm");
+  // CONFIRMAR, con todas sus letras, sí es para la tarjeta.
+  starts(textOf(await say(deps, never, "confirmar")), "Listo, ya salió.");
+  assert.equal(pey.pushes.length, 1);
+});

@@ -20,6 +20,7 @@ import {
 import type { AppConfig } from "./config.js";
 import { accountLink } from "./cuenta.js";
 import { formatMxn, mexicoDayStart, parsePesosToCents } from "./money.js";
+import { derivable, eitherOr, foreignCurrency, saidAmount, soleMoney } from "./montos.js";
 import type { PeyBankAccount, PeyTransaction } from "./pey.js";
 import { toTenDigits } from "./phone.js";
 import {
@@ -743,31 +744,24 @@ const CLAIMS_ACCOUNT = /(cuenta[^.!?\n]{0,40}(activa|lista|verificada))|modo de 
 const NOT_DONE =
   'No me quedó claro qué hacer con eso. Dímelo otra vez en una frase, por ejemplo: "cobra 150" o "gasté 300 en insumos".';
 
-/** Montos dichos con letra ("ciento cincuenta pesos"): no se pueden cotejar, pero se nota que dijo uno. */
+/**
+ * Montos dichos con letra o en jerga ("ochenta pesos", "ciento cincuenta",
+ * "un centavo", "una luca"): no se pueden cotejar cifra por cifra, pero consta
+ * que la persona dijo uno. Pasa seguido en notas de voz.
+ */
 const AMOUNT_WORDS =
-  /\b(veinte|veinti\w+|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|ciento|\w*cientos|quinientos|mil|pesos?|centavos?)\b/i;
+  /\b(un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieci\w+|veinte|veinti\w+|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|ciento|\w*cientos|quinientos|mil|mill[oó]n|millones|medio)\s+(pesos?|centavos?|varos?|bolas?|mil\b|mill[oó]n|millones)|\b(veinte|veinti\w+|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|ciento|\w*cientos|quinientos|mil)\b|\b(luca|lucas|quinient[oó]n|tost[oó]n|milpa)\b/i;
 
 /**
  * ¿Ese monto lo dijo la persona, o sale de su libro? Un cobro nunca lleva una
- * cifra que el modelo se inventó: tiene que estar en sus últimos mensajes, ser
- * un fiado apuntado, o venir del catálogo (eso lo resuelve el ticket).
+ * cifra que el modelo se inventó. Vale si la escribió (en cualquier formato),
+ * si es un fiado apuntado, si sale de una cuenta sencilla sobre lo que dijo
+ * ("el doble", "más 20 de envío", "con 10% de descuento"), o si la dijo con
+ * letra. Lo del catálogo lo resuelve el ticket.
  */
-export function knownAmount(store: Store, owner: string, cents: number): boolean {
-  const texts = store
-    .recentTurns(owner)
-    .filter((turn) => turn.role === "user")
-    .slice(-6)
-    .map((turn) => turn.content);
-  for (const text of texts) {
-    // "50 centavos" son 50 centavos, no 50 pesos: se leen aparte.
-    for (const match of text.matchAll(/(\d{1,2})\s*centavos?/gi)) {
-      if (Number(match[1]) === cents) return true;
-    }
-    const pesos = text.replace(/\d{1,2}\s*centavos?/gi, " ");
-    for (const token of pesos.match(/\d[\d.,]*/g) ?? []) {
-      if (parsePesosToCents(token.replace(/[.,]+$/, "")) === cents) return true;
-    }
-  }
+export function knownAmount(store: Store, owner: string, cents: number, extras: number[] = []): boolean {
+  const texts = recentUserText(store, owner);
+  if (saidAmount(texts, cents)) return true;
   const fiado = openDebts(store, owner, "deuda");
   if (fiado.some((note) => owed(note) === cents)) return true;
   const perPerson = new Map<string, number>();
@@ -776,28 +770,25 @@ export function knownAmount(store: Store, owner: string, cents: number): boolean
     perPerson.set(key, (perPerson.get(key) ?? 0) + owed(note));
   }
   if ([...perPerson.values()].includes(cents)) return true;
-  const last = texts[texts.length - 1] ?? "";
-  return !/\d/.test(last) && AMOUNT_WORDS.test(last);
+  // Las cuentas se hacen sobre lo reciente: el último mensaje y los dos anteriores.
+  const recent = texts.slice(-3);
+  const lastCharge = store
+    .listCharges(owner)
+    .filter((charge) => charge.status !== "cancelled" || charge.createdAt === Math.max(...store.listCharges(owner).map((c) => c.createdAt)))
+    .slice(-1)[0];
+  const bases = [...extras, ...(lastCharge && lastCharge.amountCents > 0 ? [lastCharge.amountCents / 100] : [])];
+  if (derivable(cents, recent, bases)) return true;
+  return recent.some((text) => AMOUNT_WORDS.test(text));
 }
 
 /**
  * El monto que la persona escribió como dinero en su último mensaje ("$150",
- * "150 pesos", "0.01"), si hay uno solo. Con él la caja corrige al modelo
- * cuando manda otra cifra: lo que dijo la persona manda.
+ * "150 pesos", "0.01", "2.5k"), si hay uno solo. Con él la caja corrige al
+ * modelo cuando manda otra cifra: lo que dijo la persona manda.
  */
 function spokenMoney(store: Store, owner: string): number | null {
-  const turns = store.recentTurns(owner).filter((turn) => turn.role === "user");
-  const last = turns[turns.length - 1]?.content ?? "";
-  const pattern = /\$\s*(\d[\d.,]*)|(\d[\d.,]*)\s*(?:pesos?|varos?|mxn)\b|(?<![\d.,])(\d+[.,]\d{1,2})(?![\d.,]*\d)/gi;
-  const found = new Set<number>();
-  for (const match of last.matchAll(pattern)) {
-    const cents = parsePesosToCents((match[1] ?? match[2] ?? match[3] ?? "").replace(/[.,]+$/, ""));
-    if (cents !== null) found.add(cents);
-  }
-  for (const match of last.matchAll(/(\d{1,2})\s*centavos?/gi)) {
-    if (Number(match[1]) > 0) found.add(Number(match[1]));
-  }
-  return found.size === 1 ? ([...found][0] ?? null) : null;
+  const texts = recentUserText(store, owner);
+  return soleMoney(texts[texts.length - 1] ?? "");
 }
 
 /** Lo que la persona escribió en sus últimos mensajes, del más viejo al más nuevo. */

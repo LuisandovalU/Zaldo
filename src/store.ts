@@ -158,6 +158,8 @@ export interface Turn {
   content: string;
   at: number;
   tools?: TurnTool[];
+  /** Este turno fue la tarjeta de ese cobro: un "sí" justo después es para él. */
+  cardOf?: string;
 }
 
 interface Data {
