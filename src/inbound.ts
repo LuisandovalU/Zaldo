@@ -6,4 +6,6 @@ export type Inbound =
 export type Outbound =
   | { kind: "text"; to: string; text: string }
   | { kind: "buttons"; to: string; text: string; yesId: string; noId: string }
+  /** Una pregunta con dos o tres respuestas que se tocan. El id "o:<texto>" vuelve como si la persona lo hubiera escrito. */
+  | { kind: "choice"; to: string; text: string; options: { id: string; label: string }[]; style?: "buttons" | "poll" | "text" }
   | { kind: "image"; to: string; png: Buffer; caption: string };

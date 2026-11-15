@@ -60,10 +60,80 @@ function call(name: string, args: object, id = "c1"): ToolCall {
   return { id, type: "function", function: { name, arguments: JSON.stringify(args) } };
 }
 
-/** Un modelo de mentira: llama a esas herramientas y, si le regresan algo, lo repite. */
-function calls(...list: [string, object][]): Completer {
+const EVERY: Record<string, string> = { semanal: "cada semana", quincenal: "cada quincena", mensual: "cada mes" };
+
+/**
+ * Lo que escribiría la persona para pedir eso. La caja coteja cada dato del
+ * modelo (montos, celulares, nombres) contra el mensaje: un modelo de mentira
+ * que manda { amount: 150, payerName: "Ana" } necesita que alguien haya dicho
+ * "cóbrale 150 a Ana".
+ */
+function phrase(name: string, raw: object): string | null {
+  const args = raw as Record<string, unknown>;
+  const text = (key: string) => (args[key] === undefined || args[key] === null ? "" : String(args[key]));
+  switch (name) {
+    case "prepare_charge": {
+      const items = Array.isArray(args.items)
+        ? (args.items as Record<string, unknown>[])
+            .map((item) => `${item.qty ?? 1} ${String(item.name)}${item.price ? ` a ${String(item.price)}` : ""}`)
+            .join(", ")
+        : "";
+      const what = [args.openAmount ? "un QR abierto" : items || text("amount"), text("concept") ? `de ${text("concept")}` : ""]
+        .filter(Boolean)
+        .join(" ");
+      const who = text("payerName");
+      const phone = text("payerPhone");
+      const head =
+        who === "yo"
+          ? `cóbrame a mí ${what}${phone ? `, mi cel es ${phone}` : ""}`
+          : who
+            ? `cóbrale ${what} a ${who}${phone ? `, su cel es ${phone}` : ""}`
+            : `cobra ${what}${phone ? ` al ${phone}` : ""}`;
+      const how = [
+        args.method === "qr" ? "con QR" : args.method === "link" ? "con link" : "",
+        args.tip ? "con propina" : "",
+        args.fixed ? "en un QR fijo" : "",
+        EVERY[text("every")] ?? "",
+      ].filter(Boolean);
+      return [head, ...how].join(" ");
+    }
+    case "set_product":
+      return args.price === 0 || args.price === "0" ? `quita ${text("name")} del catálogo` : `agrega ${text("name")} a ${text("price")}`;
+    case "add_note": {
+      const [amount, concept, who] = [text("amount"), text("concept"), text("who")];
+      if (args.kind === "gasto") return `gasté ${amount} en ${concept}`;
+      if (args.kind === "ingreso") return `me pagaron ${amount} en efectivo de ${concept}`;
+      if (args.kind === "deuda") return `${who} me quedó a deber ${amount} de ${concept}`;
+      return `le debo ${amount} a ${who} de ${concept}`;
+    }
+    case "settle_debt":
+      return args.direction === "pague"
+        ? `ya le pagué ${text("amount")} a ${text("who")}`.replace("  ", " ")
+        : `${text("who")} ya me pagó ${text("amount")}`.trim();
+    case "undo_last":
+      return "me equivoqué, bórralo";
+    case "remember":
+      return `recuerda que ${text("fact")}`;
+    case "set_business":
+      return [text("business") ? `mi negocio se llama ${text("business")}` : "", text("dailyGoal") ? `mi meta de hoy es ${text("dailyGoal")}` : ""]
+        .filter(Boolean)
+        .join(" y ");
+    case "save_contact":
+      return `guarda a ${text("name")}, su cel es ${text("phone")}`;
+    default:
+      return null;
+  }
+}
+
+type Scripted = Completer & { said?: string };
+
+/**
+ * Un modelo de mentira: llama a esas herramientas y, si le regresan algo, lo
+ * repite. Trae consigo el mensaje con el que la persona lo habría pedido.
+ */
+function calls(...list: [string, object][]): Scripted {
   let step = 0;
-  return async ({ messages }) => {
+  const complete: Scripted = async ({ messages }) => {
     step += 1;
     if (step === 1) {
       return { content: null, toolCalls: list.map(([name, args], index) => call(name, args, `call_${index}`)) };
@@ -71,6 +141,9 @@ function calls(...list: [string, object][]): Completer {
     const outputs = messages.filter((message) => message.role === "tool").map((message) => message.content ?? "");
     return { content: outputs.slice(-list.length).join("\n"), toolCalls: [] };
   };
+  const parts = list.map(([name, args]) => phrase(name, args));
+  if (parts.every((part) => part !== null)) complete.said = parts.join(" y ");
+  return complete;
 }
 
 interface FakePey extends PeyPort {
@@ -132,10 +205,11 @@ function flow(store: Store, pey: PeyPort, over: Partial<AppConfig> = {}, now = N
   };
 }
 
-/** Un mensaje que ya trae los montos de estas pruebas: la caja solo cobra cifras que la persona dijo. */
-const SAID = "cóbrame a mí 0.01, 10, 20, 40, 50, 90, 120, 150, 200, 420 o 450";
+/** Para lo que no necesita un pedido en particular (el corte, la lista del catálogo). */
+const SAID = "¿cómo va la caja?";
 
-async function say(deps: FlowDeps, owner: string, complete: Completer, text = SAID): Promise<Outbound[]> {
+/** Sin texto explícito, la persona escribe lo que ese modelo de mentira va a mandar. */
+async function say(deps: FlowDeps, owner: string, complete: Scripted, text = complete.said ?? SAID): Promise<Outbound[]> {
   deps.complete = complete;
   const messageId = `m${++seq}`;
   const handled = await handleInbound(deps, { type: "text", owner, messageId, text });
@@ -154,6 +228,12 @@ function textOf(messages: Outbound[]): string {
   const first = messages[0];
   if (!first) return "";
   return first.kind === "image" ? first.caption : first.text;
+}
+
+/** La tarjeta de un cobro por confirmar. Si llegó otra cosa, el error enseña qué. */
+function cardIn(messages: Outbound[]): Extract<Outbound, { kind: "buttons" }> {
+  for (const message of messages) if (message.kind === "buttons") return message;
+  throw new Error(`esperaba la tarjeta: ${textOf(messages)}`);
 }
 
 /** Prepara un cobro y lo confirma. Devuelve lo que contestó la confirmación. */
@@ -248,7 +328,7 @@ test("el catálogo arma el ticket: precios y total los pone la caja", async () =
   assert.equal(list, "Tu catálogo\nuñas acrílicas · $350.00\ngel · $200.00\ncorte · $150.00");
 
   // Nombres a medias, con mayúsculas o en plural caen en el producto; el modelo no manda precios.
-  const card = await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "acrílicas", qty: 2 }, { name: "Gel" }, { name: "cortes", qty: 1 }] }]));
+  const card = await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "acrílicas", qty: 2 }, { name: "Gel" }, { name: "cortes", qty: 1 }] }]), "cobra 2 acrílicas, un gel y un corte");
   assert.equal(
     textOf(card),
     [
@@ -271,18 +351,18 @@ test("el catálogo arma el ticket: precios y total los pone la caja", async () =
   assert.equal(pey.qrs[0]?.concept, "2 uñas acrílicas, 1 gel, 1 corte");
 
   // Aunque el modelo mande un monto o un precio, manda el catálogo.
-  await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "gel", qty: 3, price: 1 }], amount: 5 }]));
+  await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "gel", qty: 3, price: 1 }], amount: 5 }]), "cobra 3 gel");
   assert.equal(store.listCharges(OWNER).at(-1)?.amountCents, 60_000);
 
   // Lo que no está en el catálogo no se inventa…
   const unknown = textOf(await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "tinte" }] }]), "cobra un tinte"));
   assert.equal(unknown, 'No tengo "tinte" en tu catálogo. ¿A cuánto lo cobro? Dime el precio y lo dejo guardado.');
   // …salvo que la persona haya dicho el precio.
-  await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "tinte", price: 450 }, { name: "corte" }] }]));
+  await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "tinte", price: 450 }, { name: "corte" }] }]), "cobra un tinte a 450 y un corte");
   assert.equal(store.listCharges(OWNER).at(-1)?.amountCents, 60_000);
 
   const bad = textOf(await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "gel", qty: 0 }] }])));
-  assert.match(bad, /de 1 a 99/);
+  assert.match(bad, /mayor a cero/);
 
   const changed = textOf(await say(deps, OWNER, calls(["set_product", { name: "Gel", price: 250 }])));
   assert.equal(changed, "Precio nuevo: Gel a $250.00 (antes $200.00).");
@@ -323,13 +403,13 @@ test("quién paga: el cliente con QR, su celular, o quien escribe", async () => 
 
   // Un cliente sin celular ni registro: no se inventa a quién cobrarle.
   const unknown = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 90, concept: "pan", payerName: "Ana" }])));
-  assert.match(unknown, /no tengo el celular de Ana/);
+  starts(unknown, "No tengo el celular de Ana. ¿Cuál es?");
   assert.equal(pey.pushes.length, 1);
 
   // Con celular queda de cliente, y la siguiente vez basta el nombre.
   await say(deps, OWNER, calls(["prepare_charge", { amount: 90, concept: "pan", payerName: "Ana", payerPhone: "55 2222 3333" }]));
   const again = await say(deps, OWNER, calls(["prepare_charge", { amount: 50, concept: "café", payerName: "ana" }]));
-  assert.match(textOf(again), /ana · 55 2222 3333/);
+  assert.match(cardIn(again).text, /ana · 55 2222 3333/);
 
   const bad = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 10, concept: "x", payerName: "Luis", payerPhone: "12345" }])));
   assert.match(bad, /10 dígitos/);
@@ -339,7 +419,7 @@ test("un chat sin número pide el celular una sola vez", async () => {
   const store = memoryStore();
   const deps = flow(store, fakePey());
   const ask = textOf(await say(deps, LID, calls(["prepare_charge", { amount: 150, concept: "uñas", payerName: "yo" }])));
-  assert.match(ask, /no sé el celular/);
+  starts(ask, "¿A qué celular te mando la notificación?");
   assert.equal(store.listCharges(LID).length, 0);
 
   const card = await say(deps, LID, calls(["prepare_charge", { amount: 150, concept: "uñas", payerName: "yo", payerPhone: "3322054352" }]));
@@ -562,7 +642,7 @@ test("las cifras salen del libro, no del modelo", async () => {
     if (asked > 1) return { content: "Llevas como $999 vendidos, creo.", toolCalls: [] };
     return { content: null, toolCalls: [call("add_note", { kind: "gasto", amount: 250, concept: "tacos", category: "comida" })] };
   };
-  assert.equal(textOf(await say(deps, OWNER, once)), "Apuntado: gasto de $250.00 · tacos (comida).");
+  assert.equal(textOf(await say(deps, OWNER, once, "gasté 250 en tacos")), "Apuntado: gasto de $250.00 · tacos (comida).");
   assert.equal(asked, 1);
 
   // Si la herramienta falla, sí vuelve al modelo para que pregunte.
@@ -573,7 +653,7 @@ test("las cifras salen del libro, no del modelo", async () => {
     assert.match(messages.at(-1)?.content ?? "", /^ERROR: falta el nombre/);
     return { content: "¿Quién te quedó a deber esos $100?", toolCalls: [] };
   };
-  assert.equal(textOf(await say(deps, OWNER, failing)), "¿Quién te quedó a deber esos $100?");
+  assert.equal(textOf(await say(deps, OWNER, failing, "me quedaron a deber 100 de pan")), "¿Quién te quedó a deber esos $100?");
   assert.equal(asked, 2);
 
   // El modelo presume que apuntó sin llamar a nada: se le exige hacerlo de verdad.
@@ -584,7 +664,7 @@ test("las cifras salen del libro, no del modelo", async () => {
     assert.equal(messages.at(-1)?.role, "system");
     return { content: null, toolCalls: [call("add_note", { kind: "ingreso", amount: 3000, concept: "evento" })] };
   };
-  assert.equal(textOf(await say(deps, OWNER, liar)), "Apuntado: venta en efectivo de $3,000.00 · evento.");
+  assert.equal(textOf(await say(deps, OWNER, liar, "vendí 3000 en efectivo del evento")), "Apuntado: venta en efectivo de $3,000.00 · evento.");
   assert.equal(store.listNotes(OWNER).filter((note) => note.kind === "ingreso").length, 1);
 
   // Si insiste en presumir, la persona recibe la verdad, no un "apuntado" falso.
@@ -671,15 +751,15 @@ test("un cobro nunca lleva un monto que nadie dijo", async () => {
 
   // En cuanto la persona lo dice, sí: suelto, por pieza o con formato.
   const said = await say(deps, OWNER, calls(["prepare_charge", { amount: 65, concept: "gringa" }]), "a 65");
-  assert.equal(said[0]?.kind, "buttons");
+  starts(cardIn(said).text, "Cobro por $65.00");
   const perPiece = await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "gringa", qty: 2, price: 65 }] }]), "mejor dos");
   assert.match(textOf(perPiece), /Cobro por \$130\.00/);
   const formatted = await say(deps, OWNER, calls(["prepare_charge", { amount: 1500, concept: "evento" }]), "cobra $1,500.00 del evento.");
-  assert.equal(formatted[0]?.kind, "buttons");
+  starts(cardIn(formatted).text, "Cobro por $1,500.00");
 
   // Dicho con letra en una nota de voz: no se puede cotejar, pero la persona sí dijo un monto.
   const spoken = await say(deps, OWNER, calls(["prepare_charge", { amount: 150, concept: "uñas", payerName: "yo" }]), "cóbrame ciento cincuenta pesos de uñas");
-  assert.equal(spoken[0]?.kind, "buttons");
+  starts(cardIn(spoken).text, "Cobro por $150.00");
 
   // Un fiado apuntado es un monto del libro: "cóbrale lo que me debe" no necesita repetirlo.
   const other = memoryStore();
@@ -699,11 +779,13 @@ test("un cobro nunca lleva un monto que nadie dijo", async () => {
   assert.equal(shop.listCharges(OWNER)[0]?.payerPhone, null);
   // Si él lo pide, sí le llega a su celular.
   const own = await say(shopDeps, OWNER, calls(["prepare_charge", { amount: 150, concept: "corte", payerName: "yo" }]), "cóbrame 150 a mí, es una prueba");
-  assert.match(textOf(own), /tu celular 55 1111 1111/);
+  // El QR del cliente quedó sin confirmar: se avisa que ya no va, y sale la tarjeta nueva.
+  starts(textOf(own), "Descarté el cobro de $150.00 que no habías confirmado");
+  assert.match(cardIn(own).text, /tu celular 55 1111 1111/);
 
   // Repetir un cobro usa sus propios montos, no los del modelo.
   const again = await say(deps, OWNER, calls(["repeat_charge", {}]), "otra igual");
-  assert.equal(again[0]?.kind, "buttons");
+  starts(cardIn(again).text, "Cobro por $150.00");
 });
 
 test("modo de prueba: la cuenta de pruebas de pey y su tope", async () => {
@@ -735,7 +817,7 @@ test("modo de prueba: la cuenta de pruebas de pey y su tope", async () => {
       asked += 1;
       if (asked > 1) return { content: "¿A qué celular te lo mando?", toolCalls: [] };
       return { content: null, toolCalls: [call("prepare_charge", { amount: 150, concept: "uñas" })] };
-    }),
+    }, "cobra 150 de uñas"),
   );
   assert.equal(asked, 1);
   starts(big, "Esta caja está en modo de prueba: por ahora cobro máximo $1.00 por cobro");

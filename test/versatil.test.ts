@@ -167,7 +167,7 @@ function flow(store: Store, pey: PeyPort, over: Partial<AppConfig> = {}): FlowDe
 }
 
 /** Un mensaje que ya trae los montos de estas pruebas: la caja solo cobra cifras que la persona dijo. */
-const SAID = "cóbrame a mí 50, 75.50, 150, 200 o 500";
+const SAID = "cobra 50, 75.50, 150, 200 y 500";
 
 async function say(deps: FlowDeps, complete: Completer, text = SAID, owner = OWNER): Promise<Outbound[]> {
   deps.complete = complete;
@@ -181,6 +181,22 @@ function textOf(messages: Outbound[]): string {
   const first = messages[0];
   if (!first) return "";
   return first.kind === "image" ? first.caption : first.text;
+}
+
+/** La tarjeta de un cobro por confirmar. Si llegó otra cosa, el error enseña qué. */
+function cardIn(messages: Outbound[]): Extract<Outbound, { kind: "buttons" }> {
+  for (const message of messages) if (message.kind === "buttons") return message;
+  throw new Error(`esperaba la tarjeta: ${textOf(messages)}`);
+}
+
+/** Lo que contestó la última herramienta, tal como quedó en la memoria (aunque a la persona le llegue otra cosa). */
+function lastToolOutput(store: Store, owner = OWNER): string {
+  const turns = store.recentTurns(owner);
+  for (let index = turns.length - 1; index >= 0; index--) {
+    const turn = turns[index];
+    if (turn?.role === "assistant") return turn.tools?.at(-1)?.output ?? "";
+  }
+  return "";
 }
 
 const never: Completer = async () => {
@@ -253,7 +269,7 @@ test("QR fijo de mostrador: no vence y cada pago cae como venta", async () => {
   const corte = corteText(store, OWNER, "hoy", NOW + 120_000);
   assert.match(corte, /Ventas CoDi: \$150\.00 en 3 cobros \(ticket promedio \$50\.00\)/);
   assert.doesNotMatch(corte, /Por cobrar/);
-  assert.equal(textOf(await say(deps, calls(["charge_status", {}]))), "QR fijo: $50.00 · café · activo");
+  assert.equal(textOf(await say(deps, calls(["charge_status", {}]))), "QR fijo: $50.00 · café · activo · 3 pagos, $150.00");
   // Sus ventas no se comen el tope de cobros del día.
   assert.equal(store.confirmedCentsSince(OWNER, 0), 5_000);
 });
@@ -380,7 +396,7 @@ test("cobro recurrente: se confirma una vez y después sale solo", async () => {
 
   // Detenerlo a mano.
   const other = flow(memoryStore(), fakePey());
-  await say(other, calls(["prepare_charge", { amount: 200, payerName: "Luis", payerPhone: "5544445555", every: "semanal" }]), "cóbrale 200 a Luis cada semana");
+  await say(other, calls(["prepare_charge", { amount: 200, payerName: "Luis", payerPhone: "5544445555", every: "semanal" }]), "cóbrale 200 a Luis cada semana, su cel es 5544445555");
   await say(other, never, "sí");
   assert.equal(textOf(await say(other, calls(["cancel_recurring", { payerName: "luis" }]))), "Listo: ya no le cobro a Luis cada semana ($200.00 · Cobro).");
   clock = NOW + 8 * DAY;
@@ -412,11 +428,29 @@ test("lo mismo a otra persona, y el estado se le pregunta a pey en ese momento",
   // "¿Ya pagó Ana?": pey dice que sí aunque el webhook no haya llegado.
   assert.equal(textOf(await say(deps, calls(["charge_status", { query: "ana" }]))), "Ana: $200.00 · boletos · pendiente");
   pey.paidPushes.add("txn_1");
+  // La respuesta es el aviso de que cayó: no hace falta repetir la línea "pagado" del mismo cobro.
+  assert.equal(textOf(await say(deps, calls(["charge_status", { query: "ana" }]))), "Ya cayó: $200.00 de Ana · boletos. Confirmado por CoDi.");
+  // Y preguntado otra vez, ya solo es su estado.
   assert.equal(textOf(await say(deps, calls(["charge_status", { query: "ana" }]))), "Ana: $200.00 · boletos · pagado");
   // Ya se lo dijo la respuesta: no llega además un "ya cayó" repetido.
   assert.deepEqual(await reconcilePending(deps), []);
   assert.equal(store.listCharges(OWNER)[0]?.paidNoticeSent, true);
 
+  // En la cuenta compartida caen cobros de mucha gente: solo se enseñan los que salieron de su libro.
+  const [toAna, toLuis] = store.listCharges(OWNER);
+  pey.transactionsByApiKey = async () => ({
+    items: [
+      tx("t3", 99_900, { payableType: "API_CODI_QR", description: "de otro negocio", datePaid: NOW + 3 * 3_600_000 }),
+      tx("t2", 15_000, { payableType: "API_CODI_PN", description: "uñas", datePaid: NOW + 2 * 3_600_000, chargeId: toAna?.id ?? null }),
+      tx("t1", 50_000, {
+        payableType: "PAYMENT_LINK",
+        breakdown: { baseCents: 45_000, tipCents: 5_000, feeCents: 350 },
+        datePaid: NOW,
+        chargeId: toLuis?.id ?? null,
+      }),
+    ],
+    nextToken: null,
+  });
   const payments = textOf(await say(deps, calls(["pey_payments", {}])));
   assert.equal(
     payments,
@@ -436,9 +470,9 @@ test("la cuenta, la ayuda y lo que se le pide recordar", async () => {
   assert.match(textOf(await say(deps, calls(["show_help", {}]))), /^Esto hago por ti:\n· Cobrar con CoDi/);
   assert.match(corteText(store, OWNER, "ayer", NOW), /^Corte de ayer/);
 
-  const kept = textOf(await say(deps, calls(["remember", { fact: "Cierro a las 8 y los lunes no abro" }])));
+  const kept = textOf(await say(deps, calls(["remember", { fact: "Cierro a las 8 y los lunes no abro" }]), "recuerda que cierro a las 8 y los lunes no abro"));
   assert.equal(kept, 'Anotado, no se me olvida: "Cierro a las 8 y los lunes no abro".');
-  await say(deps, calls(["remember", { fact: "A Ana siempre le cobro con link" }]));
+  await say(deps, calls(["remember", { fact: "A Ana siempre le cobro con link" }]), "acuérdate que a Ana siempre le cobro con link");
   await say(deps, calls(["prepare_charge", { amount: 0.5, payerName: "Ana", payerPhone: "5522223333" }]), "cóbrale 50 centavos a Ana 5522223333");
 
   // El modelo ve lo recordado y los últimos cobros sin que se los repitan.
@@ -534,7 +568,9 @@ test("lo que rompió el jurado simulado ya no se rompe", async () => {
 
   // Un celular sin nombre es de un cliente, no del dueño.
   const toNumber = await say(deps, calls(["prepare_charge", { amount: 300, payerPhone: "5522223333", method: "push" }]), "cobra 300 al 5522223333");
-  assert.equal(textOf(toNumber), "Cobro por $300.00\nLe llega a: el celular 55 2222 3333, en la app de su banco\nPor: notificación CoDi");
+  // El QR de los cortes quedó sin confirmar: se avisa que ya no va, y sale la tarjeta nueva.
+  starts(textOf(toNumber), "Descarté el cobro de $300.00 que no habías confirmado");
+  assert.equal(cardIn(toNumber).text, "Cobro por $300.00\nLe llega a: el celular 55 2222 3333, en la app de su banco\nPor: notificación CoDi");
   starts(textOf(await say(deps, never, "sí, mándalo")), "Listo, ya salió. Al 55 2222 3333 le llega la notificación CoDi por $300.00");
   assert.equal(store.listContacts(OWNER).length, 0);
 
@@ -559,9 +595,12 @@ test("lo que rompió el jurado simulado ya no se rompe", async () => {
   clock += 61_000; // otro minuto: esta prueba manda más de veinte mensajes
   // El perfil es del dueño: ni el nombre ni el celular de un cliente entran ahí.
   const before = store.getProfile(OWNER);
+  // El modelo de mentira repite el error con sus nombres internos: a la persona no le llegan, a la memoria sí.
   const wrong = textOf(await say(deps, calls(["set_profile", { name: "Ana", phone: "5522223333" }]), "cóbrale 500 de renta a Ana cada mes, su cel es 5522223333"));
-  starts(wrong, "ERROR: ese celular no es de quien escribe");
-  starts(textOf(await say(deps, calls(["set_profile", { name: "Cliente" }]), "cobra 150")), "ERROR: set_profile es solo para el nombre de quien escribe");
+  starts(wrong, "No me quedó claro qué hacer con eso.");
+  starts(lastToolOutput(store), "ERROR: ese celular no es de quien escribe");
+  starts(textOf(await say(deps, calls(["set_profile", { name: "Cliente" }]), "cobra 150")), "No me quedó claro qué hacer con eso.");
+  starts(lastToolOutput(store), "ERROR: set_profile es solo para el nombre de quien escribe");
   assert.deepEqual(store.getProfile(OWNER), before);
   assert.match(textOf(await say(deps, calls(["set_profile", { name: "Toro" }]), "hola, soy Toro y vendo tacos")), /se llama Toro/);
   // Y el "de renta" que el modelo dejó fuera sí llega al cobro.

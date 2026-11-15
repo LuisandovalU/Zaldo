@@ -36,6 +36,8 @@ export interface Charge {
   paidNoticeSent: boolean;
   /** El ticket, cuando la venta salió del catálogo. */
   items?: ChargeItem[];
+  /** Lo que se sumó o restó al total del ticket: descuento, propina fija, envío, IVA. */
+  adjustCents?: number;
   /**
    * QR fijo del mostrador: no vence y recibe muchos pagos. Se queda abierto y
    * cada pago queda como una venta aparte (parentId apunta a este QR).
@@ -78,6 +80,10 @@ export interface Recurring {
   lastChargeId: string | null;
   /** Cobros seguidos sin pagar. A los tres se pausa solo. */
   missed: number;
+  /** Veces seguidas que pey no dejó salir el cobro del periodo. No es un impago: se reintenta con calma. */
+  failures?: number;
+  /** La fecha en que tocaba el periodo que se está reintentando: el siguiente no se recorre por el reintento. */
+  dueAt?: number;
 }
 
 /**
@@ -122,6 +128,8 @@ export interface Profile {
   bank?: BankLink;
   /** Cuentas que ha registrado en total: hay un tope. */
   bankCount?: number;
+  /** Cómo ve las opciones en su WhatsApp: botones (si comprobó que los ve), encuesta o texto. */
+  choiceStyle?: "buttons" | "poll" | "text";
 }
 
 /**
@@ -274,7 +282,7 @@ export class Store {
           // Un QR abierto no tiene monto, y sus pagos los decide el cliente: no gastan el tope.
           !item.openAmount &&
           !item.parentId &&
-          (item.status === "pending" || item.status === "paid"),
+          (item.status === "pending" || item.status === "paid" || item.status === "expired"),
       )
       .reduce((sum, item) => sum + item.amountCents, 0);
   }

@@ -106,6 +106,25 @@ export class WhatsApp {
     });
   }
 
+  /** Una pregunta con hasta tres botones de respuesta. */
+  async sendChoice(to: string, body: string, options: { id: string; label: string }[]): Promise<void> {
+    await this.send({
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: body.slice(0, 1024) },
+        action: {
+          buttons: options.slice(0, 3).map((option) => ({
+            type: "reply",
+            reply: { id: option.id.slice(0, 256), title: option.label.slice(0, 20) },
+          })),
+        },
+      },
+    });
+  }
+
   async sendImage(to: string, png: Buffer, caption: string): Promise<void> {
     const form = new FormData();
     form.append("messaging_product", "whatsapp");

@@ -10,7 +10,7 @@
  * Por eso esta interfaz es chica y estable. Cambiarla obliga a tocar el
  * servidor; cambiar lo de adentro, no.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig, type AppConfig } from "./config.js";
@@ -78,14 +78,57 @@ const JSON_TYPE = "application/json";
 const PAGE_OK = `<!doctype html><meta charset="utf-8"><title>Zaldo</title><body style="font-family:sans-serif;padding:2rem"><h1>Listo</h1><p>Si ya pagaste, Zaldo te avisa por WhatsApp.</p>`;
 const PAGE_BACK = `<!doctype html><meta charset="utf-8"><title>Zaldo</title><body style="font-family:sans-serif;padding:2rem"><h1>Volviste</h1><p>El pago sigue pendiente. Puedes cerrar esta página.</p>`;
 
-/** Lo que el puente manda por WhatsApp: texto, o el QR como imagen con su pie. */
-type BridgeReply = string | { image: string; caption: string };
+/**
+ * Cómo se enseñan las opciones en WhatsApp por el puente: "buttons" (botones de
+ * respuesta rápida), "poll" (encuesta, se ve en cualquier WhatsApp) o "text".
+ * Se cambia aquí y se publica: no hace falta tocar el servidor.
+ */
+type ChoiceStyle = "buttons" | "poll" | "text";
+const CHOICE_STYLE: ChoiceStyle =
+  process.env.ZALDO_CHOICE_STYLE === "buttons" || process.env.ZALDO_CHOICE_STYLE === "text" ? process.env.ZALDO_CHOICE_STYLE : "poll";
 
-function asReplies(messages: Outbound[]): BridgeReply[] {
-  return messages.map((message) => {
-    if (message.kind === "text") return message.text;
-    if (message.kind === "buttons") return `${message.text}\n\nResponde CONFIRMAR o CANCELAR`;
-    return { image: message.png.toString("base64"), caption: message.caption };
+interface BridgeChoice {
+  text: string;
+  options: { id: string; label: string }[];
+  style: ChoiceStyle;
+  /** Lo que se manda como texto si el WhatsApp de la persona no puede enseñar botones. */
+  fallback: string;
+}
+
+/** Lo que el puente manda por WhatsApp: texto, el QR como imagen con su pie, o una pregunta con botones. */
+type BridgeReply = string | { image: string; caption: string } | { choice: BridgeChoice };
+
+/** Lo que se pregunta bajo la tarjeta cuando las opciones van aparte. */
+const CARD_QUESTION = "¿Mando este cobro?";
+
+export function asReplies(
+  messages: Outbound[],
+  canChoose = false,
+  styleFor: (owner: string) => ChoiceStyle = () => CHOICE_STYLE,
+): BridgeReply[] {
+  return messages.flatMap((message): BridgeReply[] => {
+    if (message.kind === "text") return [message.text];
+    if (message.kind === "buttons") {
+      const fallback = `${message.text}\n\nResponde CONFIRMAR o CANCELAR`;
+      const style = styleFor(message.to);
+      if (!canChoose || style === "text") return [fallback];
+      const options = [
+        { id: message.yesId, label: "Confirmar" },
+        { id: message.noId, label: "Cancelar" },
+      ];
+      // En encuesta, la tarjeta va como mensaje y abajo solo la pregunta con sus dos opciones.
+      if (style === "poll") {
+        return [message.text, { choice: { text: CARD_QUESTION, options, style, fallback: "Responde CONFIRMAR o CANCELAR" } }];
+      }
+      return [{ choice: { text: message.text, options, style, fallback } }];
+    }
+    if (message.kind === "choice") {
+      const fallback = `${message.text}\n\n${message.options.map((option) => option.label).join(" · ")}`;
+      const style = message.style ?? styleFor(message.to);
+      if (!canChoose || style === "text") return [fallback];
+      return [{ choice: { text: message.text, options: message.options, style, fallback } }];
+    }
+    return [{ image: message.png.toString("base64"), caption: message.caption }];
   });
 }
 
@@ -107,6 +150,56 @@ interface OutboxItem {
  * Arranca Zaldo con las llaves del entorno. Si falta alguna, lanza el motivo:
  * el servidor contesta 503 y sigue sirviendo la landing.
  */
+/**
+ * ¿Es el secreto esperado? Se comparan los sha256 en tiempo constante: lo que
+ * tarda la respuesta no le dice a nadie cuántos caracteres atinó.
+ */
+export function sameSecret(given: unknown, expected: string | null | undefined): boolean {
+  if (typeof given !== "string" || !given || !expected) return false;
+  const a = createHash("sha256").update(given).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
+/** "hace un momento", "hace 3 min", "hace 2 h", "hace 4 días". */
+export function ago(at: number, now: number): string {
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  if (seconds < 60) return "hace un momento";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `hace ${hours} h`;
+  return `hace ${Math.round(hours / 24)} días`;
+}
+
+/**
+ * Lo que el puente de WhatsApp dejó anotado: cuándo llegó el último mensaje y
+ * cuándo salió la última respuesta. Solo fechas; nunca quién escribió ni qué.
+ */
+export function bridgeActivity(dataDir: string, now: number): string {
+  let stats: Record<string, unknown>;
+  try {
+    stats = JSON.parse(readFileSync(join(dataDir, "zaldo-wa-stats.json"), "utf8")) as Record<string, unknown>;
+  } catch {
+    return "";
+  }
+  const when = (key: string): number => {
+    const value = Number(stats[key]);
+    return Number.isFinite(value) && value > 0 && value <= now + 60_000 ? value : 0;
+  };
+  const inbound = when("lastInboundAt");
+  const replied = when("lastReplyAt");
+  const failed = when("lastErrorAt");
+  if (!inbound && !replied) return "Todavía no llega ningún mensaje a este número.";
+  const parts = [
+    inbound ? `Último mensaje recibido: ${ago(inbound, now)}` : "Sin mensajes recibidos",
+    replied ? `última respuesta: ${ago(replied, now)}` : "sin respuestas todavía",
+  ];
+  // Un tropiezo más nuevo que la última respuesta es justo lo que hay que ver aquí.
+  if (failed && failed > replied) parts.push(`último tropiezo: ${ago(failed, now)}`);
+  return parts.join(" · ");
+}
+
 export function createZaldo(host: CoreHost): ZaldoCore {
   const config: AppConfig = loadConfig(host.env);
   if (!config.publicBaseUrl && host.publicBaseUrl) config.publicBaseUrl = host.publicBaseUrl.replace(/\/$/, "");
@@ -184,8 +277,7 @@ export function createZaldo(host: CoreHost): ZaldoCore {
   const accounts: AccountDeps = { store, config, pey, now: () => Date.now(), botNumber };
 
   const bridgeOk = (request: CoreRequest) => {
-    const given = request.headers["x-zaldo-token"];
-    return !!given && given === config.whatsappVerifyToken;
+    return sameSecret(request.headers["x-zaldo-token"], config.whatsappVerifyToken);
   };
 
   async function deliver(messages: Outbound[]): Promise<void> {
@@ -193,7 +285,8 @@ export function createZaldo(host: CoreHost): ZaldoCore {
       if (message.kind === "text") await whatsapp.sendText(message.to, message.text);
       else if (message.kind === "buttons") {
         await whatsapp.sendButtons(message.to, message.text, message.yesId, message.noId);
-      } else await whatsapp.sendImage(message.to, message.png, message.caption);
+      } else if (message.kind === "choice") await whatsapp.sendChoice(message.to, message.text, message.options);
+      else await whatsapp.sendImage(message.to, message.png, message.caption);
     }
   }
 
@@ -214,9 +307,11 @@ export function createZaldo(host: CoreHost): ZaldoCore {
         : state === "error" || state === "close"
           ? `No pude abrir WhatsApp. ${detail}`
           : "En el celular del bot: WhatsApp, Ajustes, Dispositivos vinculados, Vincular un dispositivo.";
+    const activity = state === "open" ? bridgeActivity(dataDir, Date.now()) : "";
+    const seen = activity ? `<p style="color:#667085;font-size:.9rem">${activity}</p>` : "";
     return reply(
       200,
-      `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="5"><title>Vincular</title><body style="font-family:sans-serif;text-align:center;padding:2rem"><h1>Vincular Zaldo</h1><p>${msg}</p>${img}</body>`,
+      `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="5"><title>Vincular</title><body style="font-family:sans-serif;text-align:center;padding:2rem"><h1>Vincular Zaldo</h1><p>${msg}</p>${seen}${img}</body>`,
       HTML,
     );
   }
@@ -247,10 +342,19 @@ export function createZaldo(host: CoreHost): ZaldoCore {
       }
       if (!text.trim()) return json(200, { replies: ["No te entendí en la nota de voz. ¿Me lo escribes?"] });
     }
-    // CONFIRMAR / CANCELAR los resuelve handleInbound (flows.ts), igual que un botón.
-    const handled = await handleInbound(flows, { type: "text", owner: from, messageId, text });
+    // El puente nuevo sabe enseñar botones y lo dice; al viejo se le sigue mandando texto.
+    const canChoose = Array.isArray(body.caps) && body.caps.includes("choice");
+    // Un botón tocado: el de la tarjeta (c:/x:) va directo a la caja; el de una pregunta es su texto.
+    const button = typeof body.button === "string" ? body.button.slice(0, 300) : "";
+    const handled = await handleInbound(
+      flows,
+      /^[cx]:[0-9a-f-]{36}$/i.test(button)
+        ? { type: "button", owner: from, messageId, buttonId: button }
+        : // CONFIRMAR / CANCELAR escritos los resuelve handleInbound (flows.ts), igual que un botón.
+          { type: "text", owner: from, messageId, text: text || (button.startsWith("o:") ? button.slice(2) : "") },
+    );
     if (handled.claimed) ackInbound(store, messageId);
-    return json(200, { replies: asReplies(handled.messages) });
+    return json(200, { replies: asReplies(handled.messages, canChoose, (owner) => store.getProfile(owner).choiceStyle ?? CHOICE_STYLE) });
   }
 
   async function metaWebhook(request: CoreRequest): Promise<CoreReply> {
@@ -339,7 +443,7 @@ export function createZaldo(host: CoreHost): ZaldoCore {
         const challenge = request.query["hub.challenge"] ?? "";
         const ok =
           request.query["hub.mode"] === "subscribe" &&
-          request.query["hub.verify_token"] === config.whatsappVerifyToken &&
+          sameSecret(request.query["hub.verify_token"], config.whatsappVerifyToken) &&
           !!challenge;
         return ok ? reply(200, challenge) : reply(403, "forbidden");
       }

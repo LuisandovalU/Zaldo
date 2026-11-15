@@ -19,6 +19,7 @@ import type { AppConfig } from "./config.js";
 import type { Inbound, Outbound } from "./inbound.js";
 import { formatMxn, mexicoDayStart } from "./money.js";
 import { isAllowed } from "./phone.js";
+import { planKey } from "./recurrentes.js";
 import {
   PeyError,
   type LinkInput,
@@ -184,7 +185,12 @@ function startRecurring(store: Store, charge: Charge, now: number): Recurring | 
   if (!charge.repeat || !charge.payerPhone) return null;
   const existing = store
     .listRecurrings(charge.owner)
-    .find((plan) => plan.active && plan.payerPhone === charge.payerPhone && plan.every === charge.repeat);
+    // Otro concepto u otra frecuencia para el mismo cliente es otro plan: no pisa al que ya tenía.
+    .find(
+      (plan) =>
+        plan.active &&
+        planKey(plan) === planKey({ payerPhone: charge.payerPhone ?? "", every: charge.repeat as Recurring["every"], concept: charge.concept }),
+    );
   const plan: Recurring = {
     id: existing?.id ?? randomUUID(),
     owner: charge.owner,
@@ -203,6 +209,24 @@ function startRecurring(store: Store, charge: Charge, now: number): Recurring | 
   return plan;
 }
 
+/** Alguien confirmó una tarjeta que ya no está viva: se le dice qué pasó con ese cobro. */
+function staleCardText(store: Store, charge: Charge): string {
+  const which = charge.openAmount ? "Ese cobro" : `Ese cobro de ${formatMxn(charge.amountCents)}`;
+  if (charge.status === "cancelled") {
+    const newer = store
+      .listCharges(charge.owner)
+      .reverse()
+      .find((item) => item.status === "awaiting_confirm");
+    return newer
+      ? `${which} ya lo había descartado y no se envió: lo reemplazó el de ${newer.openAmount ? "monto abierto" : formatMxn(newer.amountCents)}. Para mandar ese, confírmame la tarjeta nueva.`
+      : `${which} ya estaba cancelado y no se envió. Si lo quieres, pídemelo otra vez.`;
+  }
+  if (charge.status === "pending") return `${which} ya salió: estoy esperando el pago. No lo mando dos veces.`;
+  if (charge.status === "paid") return `${which} ya se pagó. No lo mando dos veces.`;
+  if (charge.status === "expired") return `${which} ya venció sin pagarse. Dime "repítelo" y lo mando otra vez.`;
+  return `${which} no salió la vez pasada. Pídemelo otra vez y lo intento.`;
+}
+
 async function confirm(deps: FlowDeps, owner: string, chargeId: string): Promise<Outbound[]> {
   const now = deps.now();
   const charge = deps.store.getCharge(chargeId);
@@ -210,7 +234,7 @@ async function confirm(deps: FlowDeps, owner: string, chargeId: string): Promise
     return [{ kind: "text", to: owner, text: "Ese cobro no es de este chat." }];
   }
   if (charge.status !== "awaiting_confirm") {
-    return [{ kind: "text", to: owner, text: "Ese cobro ya no está esperando confirmación." }];
+    return [{ kind: "text", to: owner, text: staleCardText(deps.store, charge) }];
   }
   if (now > charge.confirmBy) {
     deps.store.updateCharge({ ...charge, status: "cancelled" });
@@ -318,11 +342,18 @@ async function onButton(deps: FlowDeps, owner: string, buttonId: string): Promis
     return [{ kind: "text", to: owner, text: "Ese cobro no es de este chat." }];
   }
   if (match[1].toLowerCase() === "x") {
-    if (charge.status === "awaiting_confirm") {
-      deps.store.updateCharge({ ...charge, status: "cancelled" });
-    }
     const what = charge.openAmount ? "el cobro" : `el cobro de ${formatMxn(charge.amountCents)}`;
-    const text = `Cancelé ${what}. No se envió nada.`;
+    let text = `Cancelé ${what}. No se envió nada.`;
+    if (charge.status === "awaiting_confirm") deps.store.updateCharge({ ...charge, status: "cancelled" });
+    // Un cobro que ya salió no se retira desde aquí: decir "no se envió nada" sería mentira.
+    else if (charge.status === "pending") {
+      text = charge.reusable
+        ? "Ese QR fijo ya está activo. Si ya no lo quieres usar, deja de enseñarlo: lo que no se paga no se cobra."
+        : `Ese cobro ya salió y no lo puedo retirar. Si no lo pagan, vence solo y no se cobra nada.`;
+    } else if (charge.status === "paid") {
+      text = "Ese cobro ya se pagó: no se puede cancelar. Una devolución se hace con una transferencia desde tu banco.";
+    } else if (charge.status === "cancelled") text = "Ese cobro ya estaba cancelado. No se envió nada.";
+    else text = "Ese cobro ya no está activo: no hay nada que cancelar.";
     remember(deps.store, owner, "assistant", text, deps.now());
     return [{ kind: "text", to: owner, text }];
   }
@@ -393,6 +424,60 @@ export function confirmIntent(clean: string): "yes" | "no" | null {
 }
 
 /**
+ * "Espera", "aguanta tantito", "ahorita no", "al rato": la persona no dijo ni
+ * sí ni no. La tarjeta se queda esperando. Igual de estricto que el sí: el
+ * mensaje entero tiene que ser de espera ("espera, mejor por link" es un
+ * cambio al cobro y lo ve el modelo).
+ */
+const WAIT_CORE = new Set([
+  "espera", "esperame", "esperate", "espere", "esperen", "aguanta", "aguantame", "tantito", "momento", "momentito",
+  "dejame", "deja", "chance", "permiteme", "segundo", "segundito", "seg", "luego", "despues", "rato", "ratito",
+  "ahorita", "orita", "todavia", "aun",
+]);
+const WAIT_FILLER = new Set([
+  "no", "al", "un", "ver", "veo", "checar", "checo", "pensar", "pienso", "dame", "te", "digo", "aviso", "le", "pregunto",
+  "lo", "ay", "oye", "mas", "tarde", "tantito", "poquito", "poco",
+]);
+
+export function asksToWait(clean: string): boolean {
+  if (clean.length > 50 || /[\d?¿]/.test(clean)) return false;
+  const words = plainWords(clean);
+  if (!words.length || !words.some((word) => WAIT_CORE.has(word))) return false;
+  return words.every((word) => WAIT_CORE.has(word) || WAIT_FILLER.has(word) || FILLER.has(word));
+}
+
+/** Con cualquiera de estas, lo que dijo la persona no es un sí limpio, diga lo que diga el modelo. */
+const NOT_A_YES = new Set([
+  "no", "nel", "nop", "nope", "nones", "nah", "tampoco", "negativo", "nunca", "jamas", "nada", "cancela", "cancelar",
+  "cancelo", "cancelalo", "cancelala", "cancelado", "cancelen", "cancelacion", "olvidalo", "dejalo", "dejala", "deja",
+  "borra", "borralo", "quita", "quitalo", "detente", "espera", "esperame", "esperate", "espere", "aguanta",
+  "aguantame", "tantito", "momento", "momentito", "luego", "despues", "manana", "rato", "ratito", "tarde", "todavia",
+  "aun", "pero", "mejor", "cambia", "cambialo", "cambiale", "otro", "otra", "quieres", "gustas", "crees", "puedes",
+  "puede", "pudieras", "sera", "seria", "deberia", "quiza", "quizas", "acaso", "duda", "seguro", "segura",
+]);
+
+/**
+ * El modelo dice que la persona aceptó la tarjeta con sus palabras ("ándale
+ * pues, mándaselo"). Aquí se manda dinero, así que la caja lo revisa: nada de
+ * preguntas, negaciones, esperas, condiciones ni cifras que no sean las del
+ * cobro. Si algo de eso aparece, no se manda y se pide un sí claro.
+ */
+export function modelMayConfirm(text: string, charge: Pick<Charge, "amountCents" | "payerPhone">): boolean {
+  if (!text.trim() || text.length > 160 || /[?¿]/.test(text) || NO_EMOJI.test(text)) return false;
+  if (plainWords(text).some((word) => NOT_A_YES.has(word))) return false;
+  for (const token of text.match(/\d[\d.,\s-]*\d|\d/g) ?? []) {
+    const digits = token.replace(/\D/g, "");
+    if (charge.payerPhone && digits.endsWith(charge.payerPhone)) continue;
+    const pesos = Number(token.replace(/[,\s]/g, "").replace(/\.$/, ""));
+    if (!Number.isFinite(pesos) || Math.round(pesos * 100) !== charge.amountCents) return false;
+  }
+  return true;
+}
+
+const NEEDS_CLEAR_YES = "Para mandarlo necesito un sí claro: escribe CONFIRMAR, o CANCELAR si ya no va.";
+const NOTHING_WAITING = "No hay ningún cobro esperando confirmación. Dime qué cobro y lo armo.";
+
+/**
  * Donde no hay botones (WhatsApp por puente), la tarjeta se contesta con
  * palabras. Eso lo resuelve la caja, nunca el modelo: un "cancelar" suelto no
  * debe terminar borrando un apunte, ni un "sí, mándalo" quedarse sin mandar.
@@ -404,19 +489,40 @@ async function onConfirmWord(deps: FlowDeps, owner: string, clean: string): Prom
     .find((charge) => charge.status === "awaiting_confirm");
   if (waiting) {
     const intent = confirmIntent(clean);
-    if (!intent) return null;
     // Un "sí" o un "no" contesta lo último que dijo Zaldo. Si después de la tarjeta
     // hubo otra pregunta, ese "sí" no es para el cobro: solo CONFIRMAR / CANCELAR lo son.
-    const turns = deps.store.recentTurns(owner);
-    const lastBot = [...turns].reverse().find((turn) => turn.role === "assistant");
-    const cardIsLast = lastBot?.cardOf === waiting.id;
+    const cardIsLast = lastAssistant(deps.store, owner)?.cardOf === waiting.id;
+    if (!intent) {
+      const now = deps.now();
+      if (!cardIsLast || now > waiting.confirmBy || !asksToWait(clean)) return null;
+      // La tarjeta sigue viva, con su plazo completo otra vez: nadie pidió mandarla ni tirarla.
+      const confirmBy = Math.max(waiting.confirmBy, now + deps.config.confirmWindowMs);
+      deps.store.updateCharge({ ...waiting, confirmBy });
+      const text = `Va, aquí lo dejo esperando. Cuando quieras: CONFIRMAR o CANCELAR. Te lo guardo ${minutes((confirmBy - now) / 1000)}.`;
+      remember(deps.store, owner, "user", clean, now);
+      remember(deps.store, owner, "assistant", text, now, [], waiting.id);
+      return [{ kind: "text", to: owner, text }];
+    }
     if (!cardIsLast && !EXPLICIT.test(clean)) return null;
     return onButton(deps, owner, `${intent === "yes" ? "c" : "x"}:${waiting.id}`);
   }
   if (EXPLICIT.test(clean)) {
-    return [{ kind: "text", to: owner, text: "No hay ningún cobro esperando confirmación. Dime qué cobro y lo armo." }];
+    return [{ kind: "text", to: owner, text: NOTHING_WAITING }];
   }
   return null;
+}
+
+function lastAssistant(store: Store, owner: string) {
+  return [...store.recentTurns(owner)].reverse().find((turn) => turn.role === "assistant");
+}
+
+function waitingCard(store: Store, owner: string): Charge | null {
+  return (
+    store
+      .listCharges(owner)
+      .reverse()
+      .find((charge) => charge.status === "awaiting_confirm") ?? null
+  );
 }
 
 const CORTE =
@@ -471,16 +577,101 @@ function servicesOf(deps: FlowDeps, owner: string): AgentServices {
   const { pey, config } = deps;
   // Los pagos y la cuenta que se consultan son los de la cuenta donde esa persona recibe.
   const accountId = ownBank(deps.store, owner)?.id ?? config.peyBankAccountId ?? null;
+  const canList = !!(accountId && pey.transactionsByBankAccount) || !!pey.transactionsByApiKey;
   return {
     refresh: (owner) => refreshOwner(deps, owner),
-    payments:
-      accountId && pey.transactionsByBankAccount
-        ? async () => (await pey.transactionsByBankAccount!(accountId)).items
-        : pey.transactionsByApiKey
-          ? async () => (await pey.transactionsByApiKey!()).items
-          : undefined,
+    payments: canList ? () => ownerPayments(deps, owner) : undefined,
     account: accountId && pey.bankAccount ? () => pey.bankAccount!(accountId) : undefined,
   };
+}
+
+/** Páginas que se revisan en una cuenta compartida buscando los pagos de una persona, y cuántos bastan. */
+const PAYMENT_PAGES = 4;
+const PAYMENTS_WANTED = 8;
+
+/**
+ * Lo que pey registró para ESTA persona. En su propia cuenta, todo lo que cae
+ * es suyo. En la cuenta compartida (pruebas, o una sola llave para todos) caen
+ * los cobros de mucha gente: solo cuentan los que salieron de su libro. Nadie
+ * ve los pagos de otro.
+ */
+async function ownerPayments(deps: FlowDeps, owner: string): Promise<PeyTransaction[]> {
+  const { pey, config, store } = deps;
+  const own = ownBank(store, owner);
+  if (own && pey.transactionsByBankAccount) return (await pey.transactionsByBankAccount(own.id)).items;
+  const shared = config.peyBankAccountId ?? null;
+  const page = (token?: string): Promise<PeyTransactionPage> =>
+    shared && pey.transactionsByBankAccount
+      ? pey.transactionsByBankAccount(shared, token)
+      : pey.transactionsByApiKey
+        ? pey.transactionsByApiKey(token)
+        : Promise.resolve({ items: [], nextToken: null });
+  const charges = store.listCharges(owner);
+  const ids = new Set(charges.map((charge) => charge.id));
+  const transactions = new Set(charges.map((charge) => charge.peyTransactionId).filter(Boolean));
+  // El id del QR o del link sí es de un solo cobro; el de una notificación no sirve para cruzar.
+  const payables = new Set(
+    charges.filter((charge) => charge.method !== "push").map((charge) => charge.peyExternalId).filter(Boolean),
+  );
+  const mine: PeyTransaction[] = [];
+  let token: string | undefined;
+  for (let turn = 0; turn < PAYMENT_PAGES; turn++) {
+    const result = await page(token);
+    for (const tx of result.items) {
+      if ((tx.chargeId && ids.has(tx.chargeId)) || transactions.has(tx.id) || (tx.payableId && payables.has(tx.payableId))) {
+        mine.push(tx);
+      }
+    }
+    if (!result.nextToken || mine.length >= PAYMENTS_WANTED) break;
+    token = result.nextToken;
+  }
+  return mine;
+}
+
+const TRY_BUTTONS = /^(probar|prueba de|prueba|activar?|quiero|pon|ponme|usa) (los )?botones[\s.!]*$/i;
+const SEES_BUTTONS = "Sí veo los botones";
+const NO_BUTTONS = /^(sin botones|no los veo|no veo( los)? botones|quitar? (los )?botones)[\s.!]*$/i;
+
+/**
+ * No todos los WhatsApp pintan los botones de respuesta rápida, y uno que no
+ * los pinta no enseña nada. Por eso cada quien los prueba una vez: si los ve,
+ * desde ahí sus preguntas y su tarjeta llevan botones; si no, opciones que
+ * se ven en cualquier teléfono.
+ */
+function buttonTest(deps: FlowDeps, owner: string, clean: string, now: number): Outbound[] | null {
+  const profile = deps.store.getProfile(owner);
+  if (TRY_BUTTONS.test(clean)) {
+    const intro = 'Va una prueba. Si debajo de este mensaje no aparecen dos botones, escríbeme "sin botones".';
+    const ask = "¿Ves estos botones?";
+    remember(deps.store, owner, "assistant", `${intro}\n${ask}`, now);
+    return [
+      { kind: "text", to: owner, text: intro },
+      {
+        kind: "choice",
+        to: owner,
+        text: ask,
+        style: "buttons",
+        options: [
+          { id: `o:${SEES_BUTTONS}`, label: SEES_BUTTONS },
+          { id: "o:sin botones", label: "No los veo" },
+        ],
+      },
+    ];
+  }
+  const answer = clean.replace(/[\s.!]+$/, "").toLowerCase();
+  if (answer === SEES_BUTTONS.toLowerCase() || answer === "si veo los botones") {
+    deps.store.setProfile({ ...profile, choiceStyle: "buttons" });
+    const text = "Listo: desde ahora te pregunto con botones, y la tarjeta de cada cobro trae Confirmar y Cancelar.";
+    remember(deps.store, owner, "assistant", text, now);
+    return [{ kind: "text", to: owner, text }];
+  }
+  if (NO_BUTTONS.test(clean)) {
+    deps.store.setProfile({ ...profile, choiceStyle: "poll" });
+    const text = "Va, sin botones: te pregunto con opciones que se ven en cualquier WhatsApp. Tocas una y listo.";
+    remember(deps.store, owner, "assistant", text, now);
+    return [{ kind: "text", to: owner, text }];
+  }
+  return null;
 }
 
 async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outbound[]> {
@@ -495,7 +686,12 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
       ? [{ kind: "text", to: owner, text: "Voy un poco saturado con tantos mensajes seguidos. Dame un minuto y seguimos." }]
       : [];
   }
+  // Cómo estaba la tarjeta ANTES de este mensaje: de eso depende si un "sí" del modelo vale.
+  const waitingBefore = waitingCard(deps.store, owner);
+  const cardWasLast = !!waitingBefore && lastAssistant(deps.store, owner)?.cardOf === waitingBefore.id;
   remember(deps.store, owner, "user", clean, now);
+  const tested = buttonTest(deps, owner, clean, now);
+  if (tested) return tested;
   const direct = shortcut(clean);
   let result: Awaited<ReturnType<typeof runAgent>>;
   try {
@@ -520,12 +716,16 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
     remember(deps.store, owner, "assistant", reply, now);
     return [{ kind: "text", to: owner, text: reply }];
   }
+  const notice = result.notice?.trim();
   if (result.charge) {
     const card = chargeCard(result.charge, !!testCapFor(deps.store, deps.config, owner), now);
     // Si en el mismo mensaje pidió algo más (guardar un producto, el corte), eso va antes de la tarjeta.
     const before = result.reply?.trim();
-    remember(deps.store, owner, "assistant", before ? `${before}\n\n${card}` : card, now, result.tools, result.charge.id);
+    // Y antes que todo, lo que la caja tiene que avisar ("descarté el cobro que no habías confirmado").
+    const parts = [notice, before, card].filter((part): part is string => !!part);
+    remember(deps.store, owner, "assistant", parts.join("\n\n"), now, result.tools, result.charge.id);
     return [
+      ...(notice ? [{ kind: "text" as const, to: owner, text: notice }] : []),
       ...(before ? [{ kind: "text" as const, to: owner, text: before }] : []),
       {
         kind: "buttons",
@@ -536,8 +736,28 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
       },
     ];
   }
-  const reply = result.reply ?? 'No te caché. Dime, por ejemplo: "cobra 150" o "cóbrale 200 a Ana".';
+  if (result.confirm) {
+    // El modelo entendió un sí (o un no) dicho con otras palabras. Él propone; la caja decide.
+    const waiting = waitingBefore ? deps.store.getCharge(waitingBefore.id) : null;
+    if (!waiting || waiting.status !== "awaiting_confirm") {
+      remember(deps.store, owner, "assistant", NOTHING_WAITING, now);
+      return [{ kind: "text", to: owner, text: NOTHING_WAITING }];
+    }
+    if (result.confirm === "no") return onButton(deps, owner, `x:${waiting.id}`);
+    if (!cardWasLast || !modelMayConfirm(clean, waiting)) {
+      // No se manda nada. La tarjeta sigue esperando, y el siguiente "sí" ya es para ella.
+      remember(deps.store, owner, "assistant", NEEDS_CLEAR_YES, now, [], waiting.id);
+      return [{ kind: "text", to: owner, text: NEEDS_CLEAR_YES }];
+    }
+    return onButton(deps, owner, `c:${waiting.id}`);
+  }
+  const said = result.reply ?? 'No te caché. Dime, por ejemplo: "cobra 150" o "cóbrale 200 a Ana".';
+  const reply = notice && !said.includes(notice) ? `${notice}\n\n${said}` : said;
   remember(deps.store, owner, "assistant", reply, now, result.tools);
+  // Una duda con respuestas contadas sale con botones: tocar uno es como escribirlo.
+  if (result.options && result.options.length >= 2) {
+    return [{ kind: "choice", to: owner, text: reply, options: result.options.map((label) => ({ id: `o:${label}`, label })) }];
+  }
   return [{ kind: "text", to: owner, text: reply }];
 }
 
@@ -573,7 +793,10 @@ export async function handleInbound(
   return inTurn(deps.store, inbound.owner, async () => {
     try {
       let messages: Outbound[];
-      if (inbound.type === "button") messages = await onButton(deps, inbound.owner, inbound.buttonId);
+      // El botón de una pregunta ("o:Dame un QR") es su texto: sigue la conversación como si lo hubiera escrito.
+      if (inbound.type === "button" && inbound.buttonId.startsWith("o:")) {
+        messages = await onText(deps, inbound.owner, inbound.buttonId.slice(2));
+      } else if (inbound.type === "button") messages = await onButton(deps, inbound.owner, inbound.buttonId);
       else if (inbound.type === "audio") {
         let transcript = "";
         try {
@@ -854,14 +1077,19 @@ export async function reconcilePending(
 }
 
 /**
- * "¿Ya pagó?": consulta a pey en ese momento los cobros de esa persona. Lo que
- * resulte pagado se da por avisado, porque se lo va a decir la respuesta misma.
+ * "¿Ya pagó?": consulta a pey en ese momento los cobros de esa persona.
+ * Devuelve el aviso de cada pago que apareció (también los de cobros por los
+ * que no preguntó) para que vayan en la respuesta misma. Quedan como avisados:
+ * el reloj no los vuelve a mandar.
  */
-async function refreshOwner(deps: FlowDeps, owner: string): Promise<void> {
+async function refreshOwner(deps: FlowDeps, owner: string): Promise<string[]> {
+  const texts: string[] = [];
   for (const notice of await reconcilePending(deps, { owner })) {
     const current = deps.store.getCharge(notice.chargeId);
     if (current) deps.store.updateCharge({ ...current, paidNoticeSent: true });
+    texts.push(notice.text);
   }
+  return texts;
 }
 
 export function takeExpired(store: Store, now: number): { owner: string; text: string }[] {
@@ -885,6 +1113,9 @@ export function takeExpired(store: Store, now: number): { owner: string; text: s
 /** Cobros recurrentes seguidos sin pagar antes de pausarlo solo: nadie recibe cobros que ya no quiere. */
 const MAX_MISSED = 3;
 const RETRY_LATER_MS = 6 * 3_600_000;
+/** Si pey no deja salir el cobro del periodo, se reintenta: primero pronto, luego con calma, y hasta aquí. */
+const RETRY_AFTER_MS = [15 * 60_000, 3_600_000, RETRY_LATER_MS];
+const MAX_SEND_FAILURES = 4;
 
 /**
  * Manda los cobros recurrentes que ya tocan. Cada uno se confirmó una vez al
@@ -907,9 +1138,11 @@ export async function runRecurring(deps: FlowDeps): Promise<{ owner: string; tex
       tell(plan.owner, `Pausé el cobro recurrente de ${label}: lleva ${missed} seguidos sin pagar. Si quieres retomarlo, dímelo.`);
       continue;
     }
+    // La fecha en que tocaba este periodo, aunque se esté reintentando: de ahí se cuenta el siguiente.
+    const due = plan.dueAt ?? plan.nextAt;
     const used = deps.store.confirmedCentsSince(plan.owner, mexicoDayStart(now));
     if (used + plan.amountCents > deps.config.dailyCapCents) {
-      deps.store.upsertRecurring({ ...plan, nextAt: now + RETRY_LATER_MS });
+      deps.store.upsertRecurring({ ...plan, nextAt: now + RETRY_LATER_MS, dueAt: due });
       tell(plan.owner, `No mandé el cobro recurrente de ${label}: pasa el tope de cobros de hoy. Lo intento más tarde.`);
       continue;
     }
@@ -937,11 +1170,12 @@ export async function runRecurring(deps: FlowDeps): Promise<{ owner: string; tex
     };
     deps.store.insertCharge(charge);
     // El siguiente cae en su fecha de siempre, aunque este haya salido tarde.
-    let nextAt = nextOccurrence(plan.nextAt, plan.every);
+    let nextAt = nextOccurrence(due, plan.every);
     while (nextAt <= now) nextAt = nextOccurrence(nextAt, plan.every);
+    const { dueAt: _dueAt, ...base } = plan;
     try {
       const sent = await sendPush(deps, charge, numRef, RECURRING_EXPIRATION_SEC);
-      deps.store.upsertRecurring({ ...plan, nextAt, lastChargeId: charge.id, missed });
+      deps.store.upsertRecurring({ ...base, nextAt, lastChargeId: charge.id, missed, failures: 0 });
       const who = plan.payerName === PAYER_SELF ? "Te mandé" : `Le mandé a ${plan.payerName}`;
       const whose = plan.payerName === PAYER_SELF ? "tu" : "su";
       tell(
@@ -952,13 +1186,22 @@ export async function runRecurring(deps: FlowDeps): Promise<{ owner: string; tex
       logPeyError(error, charge);
       const current = deps.store.getCharge(charge.id) ?? charge;
       deps.store.updateCharge({ ...current, status: "failed" });
-      const failures = plan.missed + 1;
-      if (failures >= MAX_MISSED) {
-        deps.store.upsertRecurring({ ...plan, active: false, missed: failures });
-        tell(plan.owner, `Pausé el cobro recurrente de ${label}: no ha podido salir ${failures} veces. ${explainPeyError(error, "push")}`);
+      // Que pey no lo deje salir no es culpa de quien paga: no cuenta como periodo sin pagar.
+      // El periodo anterior ya se evaluó arriba (missed); sin lastChargeId no se vuelve a contar.
+      const failures = (plan.failures ?? 0) + 1;
+      if (failures >= MAX_SEND_FAILURES) {
+        deps.store.upsertRecurring({ ...base, active: false, missed, failures, lastChargeId: null });
+        tell(
+          plan.owner,
+          `Pausé el cobro recurrente de ${label}: no ha podido salir ${failures} veces seguidas. ${explainPeyError(error, "push")} Cuando quede, dime que lo retome.`,
+        );
       } else {
-        deps.store.upsertRecurring({ ...plan, nextAt: now + RETRY_LATER_MS, missed: failures, lastChargeId: null });
-        tell(plan.owner, `No salió el cobro recurrente de ${label}. ${explainPeyError(error, "push")} Lo vuelvo a intentar más tarde.`);
+        const wait = RETRY_AFTER_MS[Math.min(failures - 1, RETRY_AFTER_MS.length - 1)] ?? RETRY_LATER_MS;
+        deps.store.upsertRecurring({ ...base, nextAt: now + wait, dueAt: due, missed, failures, lastChargeId: null });
+        // Se avisa la primera vez; los reintentos van callados.
+        if (failures === 1) {
+          tell(plan.owner, `No salió el cobro recurrente de ${label}. ${explainPeyError(error, "push")} Lo vuelvo a intentar más tarde.`);
+        }
       }
     }
   }

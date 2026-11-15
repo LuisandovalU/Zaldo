@@ -49,6 +49,7 @@ async function deliver(whatsapp: WhatsApp, messages: Outbound[]): Promise<void> 
   for (const message of messages) {
     if (message.kind === "text") await whatsapp.sendText(message.to, message.text);
     else if (message.kind === "buttons") await whatsapp.sendButtons(message.to, message.text, message.yesId, message.noId);
+    else if (message.kind === "choice") await whatsapp.sendChoice(message.to, message.text, message.options);
     else await whatsapp.sendImage(message.to, message.png, message.caption);
   }
 }

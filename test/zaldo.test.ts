@@ -128,7 +128,7 @@ test("preparar un cobro no llama a Pey y el botón sí lo envía una sola vez", 
   const store = memoryStore();
   const pey = fakePey();
   const flow = deps(store, pey, tool("prepare_charge", { amount: 150, concept: "Pedido", payerName: "Ana", payerPhone: "55 2222 3333" }));
-  const card = await messages(flow, { type: "text", owner: OWNER, messageId: "m1", text: "cóbrale 150 a Ana" });
+  const card = await messages(flow, { type: "text", owner: OWNER, messageId: "m1", text: "cóbrale 150 a Ana, su cel es 55 2222 3333" });
   assert.equal(pey.pushes.length, 0);
   assert.equal(card[0]?.kind, "buttons");
   if (card[0]?.kind !== "buttons") return;
@@ -261,7 +261,7 @@ test("repetir, apuntar y el saldo no mueven dinero", async () => {
   const store = memoryStore();
   const pey = fakePey();
   const flow = deps(store, pey, tool("prepare_charge", { amount: 20, concept: "Pan", payerName: "Luis", payerPhone: "5510000000" }));
-  await messages(flow, { type: "text", owner: OWNER, messageId: "r1", text: "cobra 20 de pan" });
+  await messages(flow, { type: "text", owner: OWNER, messageId: "r1", text: "cóbrale 20 de pan a Luis, su cel es 5510000000" });
   flow.complete = tool("repeat_charge", { payerName: "Luis" });
   const again = await messages(flow, { type: "text", owner: OWNER, messageId: "r2", text: "otra vez" });
   assert.equal(again[0]?.kind, "buttons");
@@ -269,7 +269,7 @@ test("repetir, apuntar y el saldo no mueven dinero", async () => {
   assert.equal(pey.pushes.length, 0);
 
   flow.complete = toolOnce("add_note", { kind: "gasto", amount: 200, concept: "gasolina" });
-  const note = await messages(flow, { type: "text", owner: OWNER, messageId: "n1", text: "apunta" });
+  const note = await messages(flow, { type: "text", owner: OWNER, messageId: "n1", text: "apunta un gasto de 200 de gasolina" });
   assert.match(note[0] && note[0].kind === "text" ? note[0].text : "", /Apuntado/);
   flow.complete = toolOnce("get_balance", {});
   const balance = await messages(flow, { type: "text", owner: OWNER, messageId: "n2", text: "zaldo" });
