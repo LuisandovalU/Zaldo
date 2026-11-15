@@ -202,12 +202,43 @@ export interface PeyPaymentLink {
   datePaid: number | null;
 }
 
+export interface PeyClientOptions {
+  /**
+   * Cuenta que recibe los cobros CoDi (ULID de POST /bank-account). Sin ella,
+   * el pago va a la cuenta CoDi ligada a la API key en el portal.
+   */
+  bankAccountId?: string | null;
+}
+
+export interface BankAccountInput {
+  alias: string;
+  name: string;
+  clabe: string;
+  entity: "BUSINESS" | "PERSON";
+}
+
 export class PeyClient {
   constructor(
     private readonly base: string,
     private readonly apiKey: string,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly options: PeyClientOptions = {},
   ) {}
+
+  private receiver(): { bankAccountId?: string } {
+    return this.options.bankAccountId ? { bankAccountId: this.options.bankAccountId } : {};
+  }
+
+  /** POST /bank-account: registra una CLABE bajo esta API key para recibir CoDi. */
+  async registerBankAccount(input: BankAccountInput): Promise<{ id: string; codiStatus: BankAccountStatus | null }> {
+    const body = await this.post("/bank-account", input);
+    const status = body.codiStatus;
+    return {
+      id: String(body.id ?? ""),
+      codiStatus:
+        status === "PENDING" || status === "PROCESSING" || status === "ACTIVE" || status === "ERROR" ? status : null,
+    };
+  }
 
   push(input: PushInput): Promise<PushResult> {
     return this.post("/codi/pn", {
@@ -216,6 +247,7 @@ export class PeyClient {
       concept: input.concept,
       expiration: input.expirationSec,
       numRef: input.numRef,
+      ...this.receiver(),
       metadata: { chargeId: input.chargeId },
     }).then((body) => ({
       transactionId: String(body.transactionId ?? ""),
@@ -230,6 +262,7 @@ export class PeyClient {
       expiration: input.expirationSec,
       numRef: input.numRef,
       generateImage: false,
+      ...this.receiver(),
       metadata: { chargeId: input.chargeId },
     }).then((body) => ({
       id: String(body.id ?? ""),

@@ -19,6 +19,22 @@ export interface AppConfig {
   pushExpirationSec: number;
   qrExpirationSec: number;
   confirmWindowMs: number;
+  /** Cuenta que recibe los cobros, si no es la ligada a la llave en el portal de pey. */
+  peyBankAccountId?: string | null;
+  /**
+   * Modo de prueba: tope por cobro, en centavos. Va con la cuenta de pruebas de
+   * pey, donde el dinero pagado no se devuelve.
+   */
+  testMaxCents?: number | null;
+}
+
+/** PEY_TEST_MAX_MXN: vacío apaga el modo de prueba. */
+export function parseTestMax(raw: string | undefined): number | null {
+  const text = raw?.trim() ?? "";
+  if (!text) return null;
+  const pesos = Number(text);
+  if (!Number.isFinite(pesos) || pesos <= 0) throw new Error("PEY_TEST_MAX_MXN tiene que ser un monto en pesos");
+  return Math.round(pesos * 100);
 }
 
 function required(name: string, value: string | undefined): string {
@@ -53,5 +69,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     pushExpirationSec: 360,
     qrExpirationSec: 3600,
     confirmWindowMs: 15 * 60 * 1000,
+    peyBankAccountId: env.PEY_BANK_ACCOUNT_ID?.trim() || null,
+    testMaxCents: parseTestMax(env.PEY_TEST_MAX_MXN),
   };
 }

@@ -264,7 +264,7 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
     complete: deps.complete,
   });
   if (result.charge) {
-    const card = chargeCard(result.charge);
+    const card = chargeCard(result.charge, !!deps.config.testMaxCents);
     remember(deps.store, owner, "assistant", card, now, result.tools);
     return [
       {

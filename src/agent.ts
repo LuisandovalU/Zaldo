@@ -401,6 +401,9 @@ function contextBlock(store: Store, owner: string, config: AppConfig, now: numbe
     `Catálogo: ${catalog || "vacío. Si cobra algo seguido, ofrece guardarlo con su precio"}.`,
     `Clientes guardados: ${contacts || "ninguno"}.`,
     `Tope de cobros de hoy: quedan ${formatMxn(left)}.`,
+    config.testMaxCents
+      ? `MODO DE PRUEBA: máximo ${formatMxn(config.testMaxCents)} por cobro. El dinero va a la cuenta de pruebas de pey, no al banco del negocio, y no se devuelve. Dilo si preguntan.`
+      : "",
     goal ? `Meta del día: ${goal}.` : "",
     fiado ? `Fiado: ${fiado}.` : "",
   ]
@@ -417,7 +420,9 @@ function payerLine(charge: Charge): string {
   return `Le llega a: ${charge.payerName} · ${phone}, en la app de su banco`;
 }
 
-export function chargeCard(charge: Charge): string {
+const TEST_NOTE = "Modo de prueba: el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve.";
+
+export function chargeCard(charge: Charge, testMode = false): string {
   const via =
     charge.method === "push" ? "notificación CoDi" : charge.method === "qr" ? "QR CoDi" : "link de pago";
   const detail = charge.items?.length
@@ -427,7 +432,13 @@ export function chargeCard(charge: Charge): string {
           : `1 × ${item.name} · ${formatMxn(item.unitCents)}`,
       )
     : [`Concepto: ${charge.concept}`];
-  return [`Cobro por ${formatMxn(charge.amountCents)}`, ...detail, payerLine(charge), `Por: ${via}`].join("\n");
+  return [
+    `Cobro por ${formatMxn(charge.amountCents)}`,
+    ...detail,
+    payerLine(charge),
+    `Por: ${via}`,
+    ...(testMode ? [TEST_NOTE] : []),
+  ].join("\n");
 }
 
 /** Lo que una herramienta no pudo hacer. Va de regreso al modelo para que pregunte o lo explique. */
@@ -558,6 +569,13 @@ export function prepareCharge(
     return {
       output: fail(
         "la persona no dijo ese monto. No inventes montos ni precios: pregúntale de cuánto es el cobro. Si dijo un precio por pieza, manda items con qty y price.",
+      ),
+    };
+  }
+  if (config.testMaxCents && amount > config.testMaxCents) {
+    return {
+      output: fail(
+        `esta caja está en modo de prueba: máximo ${formatMxn(config.testMaxCents)} por cobro, porque el dinero va a la cuenta de pruebas de pey y no se devuelve. Ofrece cobrar ${formatMxn(config.testMaxCents)} para probar.`,
       ),
     };
   }

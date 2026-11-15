@@ -13,7 +13,7 @@ import { WhatsApp } from "./whatsapp.js";
 loadEnvFile();
 const config = loadConfig();
 const store = fileStore(config.dataPath);
-const pey = new PeyClient(config.peyApiBase, config.peyKey);
+const pey = new PeyClient(config.peyApiBase, config.peyKey, fetch, { bankAccountId: config.peyBankAccountId });
 const whatsapp = new WhatsApp(config.whatsappToken, config.whatsappPhoneNumberId);
 const complete = openRouterCompleter(config);
 

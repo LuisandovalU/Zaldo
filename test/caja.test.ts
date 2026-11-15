@@ -661,6 +661,41 @@ test("un cobro nunca lleva un monto que nadie dijo", async () => {
   assert.equal(again[0]?.kind, "buttons");
 });
 
+test("modo de prueba: la cuenta de pruebas de pey y su tope", async () => {
+  // La cuenta que recibe viaja en cada cobro CoDi; sin ella, pey usa la ligada a la llave.
+  const sent: Record<string, unknown>[] = [];
+  const fakeFetch: typeof fetch = async (_url, init) => {
+    sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({ id: "01JBAVWE4NS5TGXHWGMX3KH23Q", codiStatus: "PENDING", qrString: "{}", transactionId: "t" }), { status: 200 });
+  };
+  const receiver = new PeyClient("https://api.pey.mx", "k", fakeFetch, { bankAccountId: "01JBAVWE4NS5TGXHWGMX3KH23Q" });
+  await receiver.qr({ amountCents: 1, concept: "x", numRef: "1", chargeId: "c", expirationSec: 360 });
+  await receiver.push({ amountCents: 1, phone: "5512345678", concept: "x", numRef: "1", chargeId: "c", expirationSec: 360 });
+  assert.equal(sent[0]?.bankAccountId, "01JBAVWE4NS5TGXHWGMX3KH23Q");
+  assert.equal(sent[1]?.bankAccountId, "01JBAVWE4NS5TGXHWGMX3KH23Q");
+  const plain = new PeyClient("https://api.pey.mx", "k", fakeFetch);
+  await plain.qr({ amountCents: 1, concept: "x", numRef: "1", chargeId: "c", expirationSec: 360 });
+  assert.equal("bankAccountId" in (sent[2] ?? {}), false);
+  const account = await plain.registerBankAccount({ alias: "a", name: "n", clabe: "012180015826225713", entity: "PERSON" });
+  assert.deepEqual(account, { id: "01JBAVWE4NS5TGXHWGMX3KH23Q", codiStatus: "PENDING" });
+  assert.deepEqual(sent[3], { alias: "a", name: "n", clabe: "012180015826225713", entity: "PERSON" });
+
+  // En modo de prueba nadie cobra de más: ese dinero no se devuelve.
+  const store = memoryStore();
+  const deps = flow(store, fakePey(), { testMaxCents: 100 });
+  const big = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 150, concept: "uñas" }])));
+  assert.ok(big.includes("modo de prueba: máximo $1.00 por cobro"));
+  assert.equal(store.listCharges(OWNER).length, 0);
+  const small = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 0.01, concept: "prueba" }])));
+  assert.ok(small.startsWith("Cobro por $0.01"));
+  assert.ok(small.endsWith("Modo de prueba: el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve."));
+
+  // Fuera del modo de prueba, ni tope ni aviso.
+  const normal = textOf(await say(flow(memoryStore(), fakePey()), OWNER, calls(["prepare_charge", { amount: 150, concept: "uñas" }])));
+  assert.ok(normal.startsWith("Cobro por $150.00"));
+  assert.ok(!normal.includes("Modo de prueba"));
+});
+
 test("confirmar y cancelar los resuelve la caja, no el modelo", async () => {
   const store = memoryStore();
   const pey = fakePey();
