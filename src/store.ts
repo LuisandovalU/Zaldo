@@ -122,8 +122,10 @@ export interface Profile {
   business?: string | null;
   /** Meta de venta diaria. */
   dailyGoalCents?: number | null;
-  /** Lo que la persona pidió recordar: horarios, costumbres, cómo le gusta cobrar. */
+  /** Lo que la persona pidió recordar (formato viejo: ahora vive en `memory`). */
   facts?: string[];
+  /** Las notas de Zaldo sobre esta persona, en markdown por secciones. Ella nunca las ve. */
+  memory?: string;
   /** La cuenta donde recibe sus cobros, si registró una. */
   bank?: BankLink;
   /** Cuentas que ha registrado en total: hay un tope. */

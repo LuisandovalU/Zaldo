@@ -470,8 +470,21 @@ test("la cuenta, la ayuda y lo que se le pide recordar", async () => {
   assert.match(textOf(await say(deps, calls(["show_help", {}]))), /^Esto hago por ti:\n· Cobrar con CoDi/);
   assert.match(corteText(store, OWNER, "ayer", NOW), /^Corte de ayer/);
 
-  const kept = textOf(await say(deps, calls(["remember", { fact: "Cierro a las 8 y los lunes no abro" }]), "recuerda que cierro a las 8 y los lunes no abro"));
-  assert.equal(kept, 'Anotado, no se me olvida: "Cierro a las 8 y los lunes no abro".');
+  // Anota y contesta como persona: nada de "guardado en memoria".
+  const kept = textOf(
+    await say(
+      deps,
+      (() => {
+        let step = 0;
+        return async () =>
+          ++step === 1
+            ? { content: null, toolCalls: [call("remember", { fact: "Cierro a las 8 y los lunes no abro", section: "negocio" })] }
+            : { content: "", toolCalls: [] };
+      })(),
+      "recuerda que cierro a las 8 y los lunes no abro",
+    ),
+  );
+  assert.equal(kept, "Va, lo tengo presente.");
   await say(deps, calls(["remember", { fact: "A Ana siempre le cobro con link" }]), "acuérdate que a Ana siempre le cobro con link");
   await say(deps, calls(["prepare_charge", { amount: 0.5, payerName: "Ana", payerPhone: "5522223333" }]), "cóbrale 50 centavos a Ana 5522223333");
 
@@ -482,12 +495,12 @@ test("la cuenta, la ayuda y lo que se le pide recordar", async () => {
     return { content: "Va.", toolCalls: [] };
   }, "¿a qué hora cierro?");
   const context = seen[0]?.content ?? "";
-  assert.match(context, /Lo que te pidió recordar: Cierro a las 8 y los lunes no abro · A Ana siempre le cobro con link\./);
+  assert.match(context, /TUS NOTAS SOBRE ESTA PERSONA[^\n]*\n## Negocio\n- Cierro a las 8 y los lunes no abro\n\n## Costumbres\n- A Ana siempre le cobro con link/);
   assert.match(context, /Últimos cobros \(del más viejo al más nuevo\): Ana \$0\.50 Cobro \(esperando confirmación\)\./);
 
   const gone = textOf(await say(deps, calls(["forget", { fact: "lunes" }])));
-  assert.equal(gone, 'Olvidado: "Cierro a las 8 y los lunes no abro".');
-  assert.deepEqual(store.getProfile(OWNER).facts, ["A Ana siempre le cobro con link"]);
+  assert.equal(gone, 'Listo, eso ya no lo tomo en cuenta: "Cierro a las 8 y los lunes no abro".');
+  assert.equal(store.getProfile(OWNER).memory, "## Costumbres\n- A Ana siempre le cobro con link");
 });
 
 test("aguanta: el modelo se cae, llegan mensajes encimados o demasiados", async () => {

@@ -36,6 +36,7 @@ import {
   wantsMemory,
 } from "./dicho.js";
 import { derivable, eitherOr, foreignCurrency, saidAmount, soleMoney } from "./montos.js";
+import { addNote as addMemory, cleanNote, countNotes, dropNotes, grounded, memoryOf, sectionOf } from "./memoria.js";
 import { SYSTEM } from "./prompt.js";
 import { cancelRecurrings, recurringLines, resumeRecurring, updateRecurring } from "./recurrentes.js";
 import { chargeViolation, looksLikeInstruction, looksSensitive, plausiblePhone } from "./reglas.js";
@@ -298,13 +299,19 @@ const TOOLS = [
     type: "function",
     function: {
       name: "remember",
-      description: 'Guarda algo que la persona PIDIÓ recordar ("recuerda que…", "acuérdate…", "apúntate que…"). No la uses para comentarios sueltos ni para datos de un cobro.',
+      description:
+        "Anota EN SILENCIO algo duradero que la persona dijo de su negocio, de un cliente o de cómo trabaja (qué vende, horarios, a quién le cobra cómo), aunque no pida recordarlo. Con sus palabras, corto. Nunca un cobro puntual, un monto de una venta ni datos secretos.",
       parameters: {
         type: "object",
         additionalProperties: false,
         required: ["fact"],
         properties: {
-          fact: { type: "string", description: "El dato, en una frase corta y completa." },
+          fact: { type: "string", description: "La nota, en una frase corta." },
+          section: {
+            type: "string",
+            enum: ["negocio", "clientes", "costumbres", "pendientes"],
+            description: "negocio: qué vende, dónde, horarios. clientes: datos de un cliente. costumbres: cómo le gusta cobrar o trabajar. pendientes: algo por hacer.",
+          },
         },
       },
     },
@@ -313,7 +320,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "forget",
-      description: 'Olvida algo que estaba guardado con remember. Con fact "todo" olvida todo lo recordado.',
+      description: 'La persona pide olvidar algo que te había contado ("olvida lo de los lunes"). Con fact "todo" se olvida todo.',
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -578,7 +585,7 @@ function contextBlock(store: Store, owner: string, config: AppConfig, now: numbe
       : bank.status === "ERROR"
         ? `Cuenta para recibir: la terminada en ${bank.last4} no se pudo activar. Puede registrar otra con connect_bank.`
         : `Cuenta para recibir: la terminada en ${bank.last4}, en activación con Banxico (hasta 5 días hábiles).`;
-  const facts = (profile.facts ?? []).join(" · ");
+  const memory = memoryOf(profile);
   // Los últimos cobros, para que "el de Ana", "el último" o "ese" tengan a qué referirse.
   const lastCharges = store
     .listCharges(owner)
@@ -612,7 +619,9 @@ function contextBlock(store: Store, owner: string, config: AppConfig, now: numbe
       ? `HAY UNA TARJETA ESPERANDO CONFIRMACIÓN: ${formatMxn(waiting.amountCents)} · ${waiting.concept} · ${chargeLabel(waiting)}. Todavía NO se ha enviado. Si la persona la acepta: confirm_charge. Si la rechaza: cancel_charge. Si la corrige: prepare_charge otra vez.`
       : "",
     recurring ? `Cobros recurrentes activos: ${recurring}.` : "",
-    facts ? `Lo que te pidió recordar: ${facts}.` : "",
+    memory
+      ? `TUS NOTAS SOBRE ESTA PERSONA (solo tú las ves: úsalas con naturalidad y nunca menciones que existen)\n${memory}`
+      : "TUS NOTAS SOBRE ESTA PERSONA: todavía ninguna.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -710,7 +719,6 @@ const FINAL_TOOLS = new Set([
   "cancel_recurring",
   "pey_payments",
   "account_status",
-  "remember",
   "forget",
   "show_help",
   "connect_bank",
@@ -739,7 +747,7 @@ const HELP = [
   '· Catálogo: "agrega corte a 150" y luego "cobra 2 cortes"',
   '· Caja: "corte", "gasté 300 en insumos", "me pagaron 200 en efectivo"',
   '· Fiado: "Ana me quedó a deber 300", "cóbrale a Ana lo que debe"',
-  '· Memoria: "recuerda que cierro a las 8"',
+  '· Que no se me pase: "recuerda que cierro a las 8"',
   "Escríbeme o mándame nota de voz, como te salga.",
 ].join("\n");
 
@@ -771,7 +779,7 @@ const CLAIMS_CHANGE =
 
 /** Nombres internos que nunca deben llegarle a la persona. */
 const LEAKS =
-  /prepare_charge|ask_choice|repeat_charge|cancel_charge|confirm_charge|charge_status|set_product|list_products|add_note|get_balance|undo_last|settle_debt|set_profile|set_business|save_contact|list_contacts|connect_bank|account_status|pey_payments|update_recurring|resume_recurring|cancel_recurring|list_recurring|close_fixed_qr|show_help|payerName|payerPhone|openAmount|tool_call|\bJSON\b|mis instrucciones|system prompt/i;
+  /prepare_charge|ask_choice|repeat_charge|cancel_charge|confirm_charge|charge_status|set_product|list_products|add_note|get_balance|undo_last|settle_debt|set_profile|set_business|save_contact|list_contacts|connect_bank|account_status|pey_payments|update_recurring|resume_recurring|cancel_recurring|list_recurring|close_fixed_qr|show_help|payerName|payerPhone|openAmount|tool_call|en mi memoria|mi memoria|base de datos|markdown|\bJSON\b|mis instrucciones|system prompt/i;
 
 /** Lo que pide un cobro: sin nada de esto en lo reciente, un saludo o una pregunta no arman una tarjeta. */
 const CHARGE_WORDS =
@@ -1517,37 +1525,48 @@ function execute(
       return { output: done.ok ? done.text : fail(done.text) };
     }
     case "remember": {
-      const fact = nameOf(raw.fact).replace(/[.\s]+$/, "").slice(0, 140);
-      if (fact.length < 3) return { output: fail("falta lo que hay que recordar.") };
-      // Solo se guarda lo que la persona pidió recordar o contó de cómo trabaja.
-      if (!wantsMemory(last) && !(WORK_FACT.test(last) && !CHARGE_WORDS.test(last.replace(/\d/g, "")))) {
-        return { output: fail("la persona no pidió recordar nada en este mensaje: no guardes nada y atiende lo que sí pidió.") };
+      const fact = cleanNote(nameOf(raw.fact));
+      if (fact.length < 3) return { output: fail("falta la nota.") };
+      const asked = wantsMemory(last);
+      // Un cobro no es un dato para las notas: de eso ya se encarga la caja. Un "por cierto…" sin cifras sí lo es.
+      if (!asked && /[0-9]/.test(fact) && (ORDERS_CHARGE.test(last) || /^\s*(cobra|c[oó]brale|c[oó]brame)\b/i.test(last))) {
+        return { output: "OK: eso es un cobro, no va en tus notas. Sigue con lo que la persona pidió." };
       }
-      if (looksSensitive(fact) || looksSensitive(last)) {
-        return direct("Eso no lo guardo: contraseñas, NIP, tarjetas y CLABE no se le dan a nadie por chat, tampoco a mí.");
+      if (looksSensitive(fact) || (asked && looksSensitive(last))) {
+        return asked
+          ? direct("Eso no lo guardo: contraseñas, NIP, tarjetas y CLABE no se le dan a nadie por chat, tampoco a mí.")
+          : { output: "OK: eso es un dato privado y no va en tus notas. Sigue con lo que la persona pidió." };
       }
       if (looksLikeInstruction(fact)) {
-        return direct("Eso no lo puedo guardar: recuerdo datos de tu negocio (horarios, clientes, cómo cobras), no cambios a cómo trabajo.");
+        return asked
+          ? direct("Eso no lo puedo tener presente: recuerdo cosas de tu negocio (horarios, clientes, cómo cobras), no cambios a cómo trabajo.")
+          : { output: "OK: eso no es un dato del negocio y no va en tus notas. Sigue con lo que la persona pidió." };
+      }
+      // Solo entra lo que la persona escribió: una nota no trae datos que nadie dijo.
+      if (!grounded(fact, said)) {
+        return { output: "OK: eso no lo dijo la persona, así que no se anotó. Sigue con lo que pidió." };
       }
       const profile = store.getProfile(owner);
-      const facts = (profile.facts ?? []).filter((item) => fold(item) !== fold(fact));
-      // Caben veinte: el más viejo sale para que entre el nuevo.
-      store.setProfile({ ...profile, facts: [...facts, fact].slice(-20) });
-      return { output: `Anotado, no se me olvida: "${fact}".` };
+      store.setProfile({ ...profile, memory: addMemory(memoryOf(profile), sectionOf(raw.section), fact) });
+      return {
+        output: asked
+          ? 'OK: anotado. Contesta en una frase corta y natural que lo tendrás presente (por ejemplo "Va, lo tengo presente"), sin decir "memoria", "notas" ni "guardado".'
+          : "OK: anotado en silencio. No lo menciones: sigue con lo que la persona pidió.",
+      };
     }
     case "forget": {
       const query = fold(nameOf(raw.fact));
       const profile = store.getProfile(owner);
-      const facts = profile.facts ?? [];
+      const memory = memoryOf(profile);
       if (/^todo( lo (que )?(sabes|recuerdas|guardaste|anotaste))?$/.test(query) || query === "todos") {
-        if (!facts.length) return { output: "No tengo nada guardado que olvidar." };
-        store.setProfile({ ...profile, facts: [] });
-        return { output: `Listo: olvidé ${facts.length === 1 ? "lo único" : `las ${facts.length} cosas`} que me habías pedido recordar. Tus cobros y tu caja siguen igual.` };
+        if (!countNotes(memory)) return { output: "No tengo nada tuyo que olvidar." };
+        store.setProfile({ ...profile, memory: "", facts: [] });
+        return { output: "Listo: olvidé lo que me habías contado de tu negocio. Tus cobros y tu caja siguen igual." };
       }
-      const gone = query.length >= 3 ? facts.filter((item) => fold(item).includes(query) || query.includes(fold(item))) : [];
-      if (!gone.length) return { output: fail("no tengo guardado nada parecido.") };
-      store.setProfile({ ...profile, facts: facts.filter((item) => !gone.includes(item)) });
-      return { output: gone.map((item) => `Olvidado: "${item}".`).join("\n") };
+      const dropped = dropNotes(memory, query);
+      if (!dropped.gone.length) return { output: fail("no tengo presente nada parecido.") };
+      store.setProfile({ ...profile, memory: dropped.markdown, facts: [] });
+      return { output: dropped.gone.map((item) => `Listo, eso ya no lo tomo en cuenta: "${item}".`).join("\n") };
     }
     case "show_help":
       return { output: HELP };
@@ -1953,7 +1972,8 @@ export async function runAgent(input: {
   for (let step = 0; step < 6; step++) {
     const result = await input.complete({ messages, tools: TOOLS });
     if (!result.toolCalls.length) {
-      const reply = result.content?.trim() || null;
+      const noted = tools.some((tool) => tool.name === "remember" && tool.output.startsWith("OK: anotado"));
+      const reply = result.content?.trim() || (noted ? "Va, lo tengo presente." : null);
       // Dijo que lo apuntó sin haberlo hecho: se le pide que lo haga de verdad, una vez.
       if (reply && !tools.length && CLAIMS_ACTION.test(reply)) {
         if (nudged) return { charge, reply: NOT_DONE, tools };
