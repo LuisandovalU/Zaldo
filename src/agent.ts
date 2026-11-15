@@ -490,7 +490,12 @@ export function knownAmount(store: Store, owner: string, cents: number): boolean
     .slice(-6)
     .map((turn) => turn.content);
   for (const text of texts) {
-    for (const token of text.match(/\d[\d.,]*/g) ?? []) {
+    // "50 centavos" son 50 centavos, no 50 pesos: se leen aparte.
+    for (const match of text.matchAll(/(\d{1,2})\s*centavos?/gi)) {
+      if (Number(match[1]) === cents) return true;
+    }
+    const pesos = text.replace(/\d{1,2}\s*centavos?/gi, " ");
+    for (const token of pesos.match(/\d[\d.,]*/g) ?? []) {
       if (parsePesosToCents(token.replace(/[.,]+$/, "")) === cents) return true;
     }
   }
@@ -504,6 +509,26 @@ export function knownAmount(store: Store, owner: string, cents: number): boolean
   if ([...perPerson.values()].includes(cents)) return true;
   const last = texts[texts.length - 1] ?? "";
   return !/\d/.test(last) && AMOUNT_WORDS.test(last);
+}
+
+/**
+ * El monto que la persona escribió como dinero en su último mensaje ("$150",
+ * "150 pesos", "0.01"), si hay uno solo. Con él la caja corrige al modelo
+ * cuando manda otra cifra: lo que dijo la persona manda.
+ */
+function spokenMoney(store: Store, owner: string): number | null {
+  const turns = store.recentTurns(owner).filter((turn) => turn.role === "user");
+  const last = turns[turns.length - 1]?.content ?? "";
+  const pattern = /\$\s*(\d[\d.,]*)|(\d[\d.,]*)\s*(?:pesos?|varos?|mxn)\b|(?<![\d.,])(\d+[.,]\d{1,2})(?![\d.,]*\d)/gi;
+  const found = new Set<number>();
+  for (const match of last.matchAll(pattern)) {
+    const cents = parsePesosToCents((match[1] ?? match[2] ?? match[3] ?? "").replace(/[.,]+$/, ""));
+    if (cents !== null) found.add(cents);
+  }
+  for (const match of last.matchAll(/(\d{1,2})\s*centavos?/gi)) {
+    if (Number(match[1]) > 0) found.add(Number(match[1]));
+  }
+  return found.size === 1 ? ([...found][0] ?? null) : null;
 }
 
 const SELF_WORDS =
@@ -524,7 +549,7 @@ function ticketOf(
   owner: string,
   raw: unknown,
   verify: boolean,
-): { items: ChargeItem[]; totalCents: number } | { error: string } | null {
+): { items: ChargeItem[]; totalCents: number } | { error: string; direct?: boolean } | null {
   if (!Array.isArray(raw) || !raw.length) return null;
   if (raw.length > 20) return { error: "son demasiados productos para un solo cobro." };
   const items: ChargeItem[] = [];
@@ -539,11 +564,12 @@ function ticketOf(
     const product = store.findProduct(owner, name);
     const typed = row.price === undefined || row.price === null ? null : parsePesosToCents(row.price);
     const unitCents = product?.priceCents ?? typed;
-    if (!unitCents) {
-      return { error: `"${name}" no está en el catálogo. Pregunta a cuánto lo cobra y ofrece guardarlo.` };
-    }
-    if (!product && verify && !knownAmount(store, owner, unitCents)) {
-      return { error: `"${name}" no está en el catálogo y la persona no dijo su precio. No inventes precios: pregúntale a cuánto lo cobra.` };
+    // Sin precio en el catálogo y sin que la persona lo haya dicho, pregunta la caja: el modelo no adivina.
+    if (!unitCents || (!product && verify && !knownAmount(store, owner, unitCents))) {
+      return {
+        error: `No tengo "${name}" en tu catálogo. ¿A cuánto lo cobro? Dime el precio y lo dejo guardado.`,
+        direct: true,
+      };
     }
     const label = product?.name ?? name;
     const same = items.find((item) => fold(item.name) === fold(label));
@@ -563,17 +589,22 @@ export function prepareCharge(
   verify = false,
 ): { output: string; charge?: Charge } {
   const ticket = ticketOf(store, owner, raw.items, verify);
-  if (ticket && "error" in ticket) return { output: fail(ticket.error) };
-  const amount = ticket ? ticket.totalCents : parsePesosToCents(raw.amount);
+  if (ticket && "error" in ticket) {
+    return { output: ticket.direct ? `${DIRECT}${ticket.error}` : fail(ticket.error) };
+  }
+  let amount = ticket ? ticket.totalCents : parsePesosToCents(raw.amount);
+  if (!ticket && verify && (amount === null || !knownAmount(store, owner, amount))) {
+    // El modelo mandó una cifra que nadie dijo ("0.01" convertido en 1). Si la
+    // persona escribió un solo monto, ese es; si no, la caja lo pregunta.
+    amount = spokenMoney(store, owner);
+    if (amount === null) {
+      return {
+        output: `${DIRECT}Me falta el monto. ¿De cuánto es el cobro? Escríbemelo en números, por ejemplo: "cobra 150 de uñas".`,
+      };
+    }
+  }
   if (amount === null || amount > 100_000_000) {
     return { output: fail("el monto tiene que ser en pesos, mayor a cero y de máximo $1,000,000.00.") };
-  }
-  if (!ticket && verify && !knownAmount(store, owner, amount)) {
-    return {
-      output: fail(
-        "la persona no dijo ese monto. No inventes montos ni precios: pregúntale de cuánto es el cobro. Si dijo un precio por pieza, manda items con qty y price.",
-      ),
-    };
   }
   if (config.testMaxCents && amount > config.testMaxCents) {
     return {

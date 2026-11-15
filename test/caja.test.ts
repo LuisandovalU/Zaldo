@@ -270,7 +270,7 @@ test("el catálogo arma el ticket: precios y total los pone la caja", async () =
 
   // Lo que no está en el catálogo no se inventa…
   const unknown = textOf(await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "tinte" }] }])));
-  assert.match(unknown, /"tinte" no está en el catálogo/);
+  assert.equal(unknown, 'No tengo "tinte" en tu catálogo. ¿A cuánto lo cobro? Dime el precio y lo dejo guardado.');
   // …salvo que la persona haya dicho el precio.
   await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "tinte", price: 450 }, { name: "corte" }] }]));
   assert.equal(store.listCharges(OWNER).at(-1)?.amountCents, 60_000);
@@ -617,12 +617,31 @@ test("un cobro nunca lleva un monto que nadie dijo", async () => {
 
   // "cobra una gringa" sin catálogo: el modelo inventa $60. No pasa.
   const invented = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 60, concept: "gringa" }]), "cobra una gringa"));
-  assert.match(invented, /la persona no dijo ese monto/);
+  assert.ok(invented.startsWith("Me falta el monto. ¿De cuánto es el cobro?"));
   const inventedItem = textOf(await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "gringa", price: 60 }] }]), "cobra una gringa"));
-  assert.match(inventedItem, /no dijo su precio/);
+  assert.ok(inventedItem.startsWith('No tengo "gringa" en tu catálogo. ¿A cuánto lo cobro?'));
   const guessed = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 130, concept: "2 gringas" }]), "cobra dos gringas"));
-  assert.match(guessed, /la persona no dijo ese monto/);
+  assert.ok(guessed.startsWith("Me falta el monto."));
   assert.equal(store.listCharges(OWNER).length, 0);
+
+  // Si el modelo cambia la cifra que la persona escribió, manda la de la persona.
+  const cent = await say(deps, OWNER, calls(["prepare_charge", { amount: 1, concept: "prueba" }]), "dame un QR de 0.01 de prueba");
+  assert.ok(textOf(cent).startsWith("Cobro por $0.01"));
+  const pesos = await say(deps, OWNER, calls(["prepare_charge", { amount: 1500, concept: "uñas" }]), "cobra 150 pesos de uñas");
+  assert.ok(textOf(pesos).startsWith("Cobro por $150.00"));
+  const dollar = await say(deps, OWNER, calls(["prepare_charge", { concept: "corte" }]), "cobra $80 de un corte");
+  assert.ok(textOf(dollar).startsWith("Cobro por $80.00"));
+  // "1 centavo" es un centavo aunque el modelo mande un peso, o lo mande bien.
+  const oneCent = await say(deps, OWNER, calls(["prepare_charge", { amount: 1, concept: "prueba" }]), "cobra 1 centavo de prueba");
+  assert.ok(textOf(oneCent).startsWith("Cobro por $0.01"));
+  const fifty = await say(deps, OWNER, calls(["prepare_charge", { amount: 0.5, concept: "chicle" }]), "cobra 50 centavos de un chicle");
+  assert.ok(textOf(fifty).startsWith("Cobro por $0.50"));
+  // Con dos montos en el mensaje no se adivina cuál; una cantidad suelta ("3 tintes") no es dinero.
+  const two = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 999, concept: "varios" }]), "cobra 150 pesos y 300 pesos"));
+  assert.ok(two.startsWith("Me falta el monto."));
+  const qty = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 1350, concept: "3 tintes" }]), "cobra 3 tintes"));
+  assert.ok(qty.startsWith("Me falta el monto."));
+  assert.equal(store.listCharges(OWNER).length, 5);
 
   // En cuanto la persona lo dice, sí: suelto, por pieza o con formato.
   const said = await say(deps, OWNER, calls(["prepare_charge", { amount: 65, concept: "gringa" }]), "a 65");
@@ -643,7 +662,7 @@ test("un cobro nunca lleva un monto que nadie dijo", async () => {
   const debt = await say(otherDeps, OWNER, calls(["prepare_charge", { amount: 350, concept: "uñas", payerName: "Lupita", payerPhone: "5522223333" }]), "cóbrale a Lupita lo que me debe, su cel es 5522223333");
   assert.match(textOf(debt), /Cobro por \$350\.00/);
   const wrong = textOf(await say(otherDeps, OWNER, calls(["prepare_charge", { amount: 400, concept: "uñas", payerName: "Lupita" }]), "cóbrale a Lupita lo que me debe"));
-  assert.match(wrong, /la persona no dijo ese monto/);
+  assert.ok(wrong.startsWith("Me falta el monto."));
 
   // "Cobra un corte" es una venta a un cliente: aunque el modelo diga "yo", sale QR.
   const shop = memoryStore();
