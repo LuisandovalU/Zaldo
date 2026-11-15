@@ -682,6 +682,8 @@ const WIPE_YES = "Sí, borrar todo";
 
 /** Donde se guarda el formato de botones que ya se vio funcionar: no es una persona, es la configuración. */
 export const BUTTON_CONFIG = "zaldo:botones";
+/** Los formatos que se mandan en "probar botones". Ya se comprobó cuál se ve: solo va ese. */
+const TRIAL_VARIANTS = VARIANTS.filter((variant) => variant === "A");
 
 const TRY_BUTTONS = /^(probar|prueba de|prueba|activar?|quiero|pon|ponme|usa) (los )?botones[\s.!]*$/i;
 const SEES_BUTTONS = "Sí veo los botones";
@@ -710,12 +712,11 @@ function buttonTest(deps: FlowDeps, owner: string, clean: string, now: number): 
   }
   if (TRY_BUTTONS.test(clean)) {
     // No todos los teléfonos pintan el mismo formato: van cuatro, y se queda el que la persona sí ve.
-    const intro =
-      'Te mando 4 pruebas de botones: *A*, *B*, *C* y *D*. Toca el botón de la primera que SÍ veas con botones. Si no ves ninguna, escríbeme "sin botones".';
+    const intro = 'Te mando una prueba de botones. Si la ves con botones, toca "Veo la A". Si no, escríbeme "sin botones".';
     remember(deps.store, owner, "assistant", intro, now);
     return [
       { kind: "text", to: owner, text: intro },
-      ...VARIANTS.map((variant) => ({
+      ...TRIAL_VARIANTS.map((variant) => ({
         kind: "choice" as const,
         to: owner,
         text: `Prueba ${variant}`,

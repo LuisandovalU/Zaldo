@@ -92,6 +92,7 @@ const PAGE_BACK = `<!doctype html><meta charset="utf-8"><title>Zaldo</title><bod
  * nada. En cuanto toca uno, ese chat pasa a "buttons": un solo mensaje, limpio.
  */
 type ChoiceStyle = "buttons" | "poll" | "text" | "both";
+const FIXED_VARIANT: Variant = "A";
 const CHOICE_STYLE: ChoiceStyle =
   process.env.ZALDO_CHOICE_STYLE === "buttons" || process.env.ZALDO_CHOICE_STYLE === "poll" || process.env.ZALDO_CHOICE_STYLE === "text"
     ? process.env.ZALDO_CHOICE_STYLE
@@ -377,10 +378,11 @@ export function createZaldo(host: CoreHost): ZaldoCore {
 
   /** El formato de botones para ese chat: el que comprobó, o el último que alguien vio funcionar. */
   const variantOf = (owner: string): Variant => {
-    const own = store.getProfile(owner).choiceVariant;
-    if (isVariant(own)) return own;
-    const shared = store.getProfile(BUTTON_CONFIG).choiceVariant;
-    return isVariant(shared) ? shared : "A";
+    // El formato A (respuesta rápida) es el que se comprobó en un teléfono de verdad: es el de todos.
+    // Lo que cada chat haya tocado en la prueba se conserva, pero ya no cambia el formato.
+    void owner;
+    void BUTTON_CONFIG;
+    return FIXED_VARIANT;
   };
 
   async function bridgeInbound(request: CoreRequest): Promise<CoreReply> {
