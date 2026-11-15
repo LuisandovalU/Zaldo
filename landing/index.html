@@ -9,7 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" type="image/png" href="assets/zaldo-cube.png" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="preload" as="image" href="assets/zaldo-cube.png" />
+  <link rel="stylesheet" href="styles.css?v=cube-hover" />
 </head>
 <body id="top">
   <!-- Full-Width Apple Obsidian Glass Navigation Bar -->
@@ -17,10 +18,10 @@
     <div class="shell nav-inner">
       <a href="#top" class="brand" aria-label="Zaldo inicio">
         <span class="brand-badge">
-          <img src="assets/zaldo-cube.png" alt="Zaldo Logo" class="brand-cube" />
+          <img src="assets/zaldo-cube.png" alt="Zaldo Logo" class="brand-cube" width="280" height="280" decoding="async" />
         </span>
         <span class="wordmark-crop nav-wordmark">
-          <img src="assets/zaldo-wordmark.jpg" alt="ZALDO" />
+          <img src="assets/zaldo-wordmark.jpg" alt="ZALDO" width="400" height="106" decoding="async" />
         </span>
       </a>
 
@@ -59,7 +60,7 @@
 
           <h1 class="fade-in d2">
             Conecta tu CLABE
-            <span class="h-mark">una vez.<svg viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true"><path d="M3 8 C38 2 72 11 110 6 S168 3 197 7" pathLength="1" /></svg></span>
+            <span class="h-mark">una vez.<svg viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true"><path d="M3 8 C38 2 72 11 110 6 S168 3 197 7" pathLength="100" /></svg></span>
             <span class="ink-muted">Cobra por WhatsApp.</span>
           </h1>
 
@@ -169,7 +170,7 @@
                     </button>
                     <div class="wa-identity">
                       <div class="wa-avatar">
-                        <img src="assets/zaldo-cube.png" alt="Zaldo" />
+                        <img src="assets/zaldo-cube.png" alt="Zaldo" width="280" height="280" decoding="async" />
                       </div>
                       <div class="wa-contact">
                         <div class="wa-name">
@@ -394,20 +395,35 @@
         </header>
 
         <div class="cases-grid">
-          <article class="card reveal">
-            <div class="case-icon-wrap" data-reicon="store"></div>
-            <h3>Negocios y locales</h3>
-            <p>Cobra en mostrador con un QR en segundos, repite cobros frecuentes y revisa cuánto vendiste al cierre del día.</p>
+          <article class="card case-card reveal">
+            <div class="case-photo">
+              <img src="assets/caso-negocios.jpg" alt="Negocio local cobrando con código QR desde el mostrador" width="900" height="672" loading="lazy" decoding="async" />
+            </div>
+            <div class="case-body">
+              <div class="case-icon-wrap" data-reicon="store"></div>
+              <h3>Negocios locales</h3>
+              <p>Cobra en mostrador con un QR en segundos, repite cobros frecuentes y revisa cuánto vendiste al cierre del día.</p>
+            </div>
           </article>
-          <article class="card reveal">
-            <div class="case-icon-wrap" data-reicon="user"></div>
-            <h3>Profesionistas y freelancers</h3>
-            <p>Manda links de pago o cobros CoDi a tus clientes por WhatsApp sin perseguir comprobantes ni dar tu CLABE.</p>
+          <article class="card case-card reveal">
+            <div class="case-photo">
+              <img src="assets/caso-freelancers.jpg" alt="Profesionista revisando cobros en su celular en su estudio" width="900" height="672" loading="lazy" decoding="async" />
+            </div>
+            <div class="case-body">
+              <div class="case-icon-wrap" data-reicon="user"></div>
+              <h3>Profesionistas y freelancers</h3>
+              <p>Manda links de pago o cobros CoDi a tus clientes por WhatsApp sin perseguir comprobantes ni dar tu CLABE.</p>
+            </div>
           </article>
-          <article class="card reveal">
-            <div class="case-icon-wrap" data-reicon="wallet-money"></div>
-            <h3>Control personal y amigos</h3>
-            <p>Anota tus gastos del día, cobra la parte de la cena o pregunta «¿cómo va mi zaldo?» en cualquier momento.</p>
+          <article class="card case-card reveal">
+            <div class="case-photo">
+              <img src="assets/caso-amigos.jpg" alt="Grupo de amigos dividiendo la cuenta de los tacos desde el celular" width="900" height="672" loading="lazy" decoding="async" />
+            </div>
+            <div class="case-body">
+              <div class="case-icon-wrap" data-reicon="wallet-money"></div>
+              <h3>Control personal y amigos</h3>
+              <p>Anota tus gastos del día, cobra la parte de la cena o pregunta «¿cómo va mi zaldo?» en cualquier momento.</p>
+            </div>
           </article>
         </div>
       </div>
@@ -474,7 +490,7 @@
     <section class="final-cta">
       <div class="shell final-inner reveal">
         <div class="final-cube-stage">
-          <img src="assets/zaldo-cube.png" alt="Zaldo Cube" class="final-cube" />
+          <img src="assets/zaldo-cube.png" alt="Zaldo Cube" class="final-cube" width="280" height="280" loading="lazy" decoding="async" />
         </div>
         <h2>Conecta tu CLABE y empieza a cobrar hoy.</h2>
         <p>Solo necesitas tu WhatsApp de siempre. Prueba la demo interactiva arriba paso a paso.</p>
@@ -494,7 +510,7 @@
     <div class="shell footer-inner">
       <div class="footer-brand">
         <span class="wordmark-crop footer-wordmark">
-          <img src="assets/zaldo-wordmark.jpg" alt="ZALDO" />
+          <img src="assets/zaldo-wordmark.jpg" alt="ZALDO" width="400" height="106" loading="lazy" decoding="async" />
         </span>
         <p>Tu asistente de saldo y cobros CoDi en WhatsApp.</p>
       </div>
@@ -508,9 +524,9 @@
   </footer>
 
   <script src="reicons.js"></script>
-  <script src="scenes.js"></script>
-  <script src="app.js"></script>
+  <script src="scenes.js?v=smooth-perf"></script>
+  <script src="app.js?v=mark-draw"></script>
   <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
-  <script type="module" src="phone3d.js"></script>
+  <script type="module" src="phone3d.js?v=smooth-perf"></script>
 </body>
 </html>

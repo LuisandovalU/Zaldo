@@ -12,18 +12,13 @@ const recWaveEl = document.getElementById('wa-rec-wave');
 const recSendBtn = document.getElementById('wa-rec-send');
 const recTrashBtn = document.getElementById('wa-rec-trash');
 const kbKeys = Array.from(document.querySelectorAll('#wa-keyboard .kb-row span'));
-const dockStatus = document.getElementById('dock-status');
-const dockStatusStep = document.getElementById('dock-status-step');
-const dockChipsWrap = document.getElementById('dock-chips');
-const dockChips = document.querySelectorAll('.dock-chip');
-const dockReplay = document.getElementById('dock-replay');
 const navbar = document.getElementById('navbar');
 const scrollRail = document.getElementById('scroll-rail');
 const navLinksWrap = document.getElementById('nav-links');
 const navPill = document.getElementById('nav-pill');
 const pickerGrid = document.getElementById('picker-grid');
 const pickerLens = document.getElementById('picker-lens');
-const pickerCards = document.querySelectorAll('.picker-card');
+const pickerCards = Array.from(document.querySelectorAll('.picker-card'));
 const iphoneTilt = document.getElementById('iphone-tilt');
 
 const prefersReducedMotion =
@@ -34,6 +29,7 @@ const prefersReducedMotion =
 let activePreset = 'clabe';
 let demoTimers = [];
 let sendPendingVoiceFn = null;
+let lastHitKey = null;
 
 if (recWaveEl && !recWaveEl.children.length) {
   for (let i = 0; i < 24; i++) {
@@ -61,7 +57,10 @@ function resetComposerState() {
   }
   if (replayBtn) replayBtn.classList.remove('is-tapping');
   if (recSendBtn) recSendBtn.classList.remove('is-tapping');
-  kbKeys.forEach((k) => k.classList.remove('is-hit'));
+  if (lastHitKey) {
+    lastHitKey.classList.remove('is-hit');
+    lastHitKey = null;
+  }
 }
 
 function clearDemoTimers() {
@@ -93,73 +92,173 @@ hydrateReicons();
 // Astryx Scroll Progress Rail + Sticky Navbar Elevation + Scroll-Driven #problemas Choreography
 const problemsSection = document.getElementById('problemas');
 const problemsScrollFill = document.getElementById('problems-scroll-fill');
-const probCards = Array.from(document.querySelectorAll('.prob-card'));
+const navLinks = navLinksWrap ? Array.from(navLinksWrap.querySelectorAll('a')) : [];
+
+const layout = {
+  vh: window.innerHeight || 1,
+  maxScroll: 1,
+  problemsDocTop: 0,
+  problemsTotalTravel: 1,
+  probCards: Array.from(document.querySelectorAll('.prob-card')).map((el, idx) => ({
+    el,
+    docTop: 0,
+    height: 360,
+    rowOffset: (idx % 2) * 36,
+    lastP: '',
+    lastEngaged: null,
+  })),
+  navRects: new WeakMap(),
+  pickerRects: new WeakMap(),
+  lastScrollProgress: '',
+  lastProblemsP: '',
+  lastScrolled: null,
+};
+
+function measureLayout() {
+  const sy = window.scrollY || 0;
+  const doc = document.documentElement;
+  layout.vh = window.innerHeight || 1;
+  layout.maxScroll = Math.max(1, doc.scrollHeight - layout.vh);
+
+  if (problemsSection) {
+    const rect = problemsSection.getBoundingClientRect();
+    layout.problemsDocTop = rect.top + sy;
+    layout.problemsTotalTravel = Math.max(1, rect.height + layout.vh * 0.5);
+  }
+
+  layout.probCards.forEach((m) => {
+    const r = m.el.getBoundingClientRect();
+    m.docTop = r.top + sy;
+    m.height = r.height || 360;
+  });
+
+  navLinks.forEach((link) => {
+    layout.navRects.set(link, {
+      left: link.offsetLeft,
+      top: link.offsetTop,
+      width: link.offsetWidth,
+      height: link.offsetHeight,
+    });
+  });
+
+  pickerCards.forEach((card) => {
+    layout.pickerRects.set(card, {
+      left: card.offsetLeft,
+      top: card.offsetTop,
+      width: card.offsetWidth,
+      height: card.offsetHeight,
+    });
+  });
+}
 
 let scrollRaf = 0;
 function updateScrollChrome() {
   scrollRaf = 0;
-  const doc = document.documentElement;
-  const vh = window.innerHeight || 1;
-  const maxScroll = Math.max(1, doc.scrollHeight - vh);
-  const progress = Math.min(1, Math.max(0, window.scrollY / maxScroll));
-  if (scrollRail) {
-    scrollRail.style.setProperty('--scroll-progress', progress.toFixed(4));
+  const sy = window.scrollY || 0;
+  const vh = layout.vh;
+  const progress = Math.min(1, Math.max(0, sy / layout.maxScroll)).toFixed(4);
+  if (scrollRail && progress !== layout.lastScrollProgress) {
+    layout.lastScrollProgress = progress;
+    scrollRail.style.setProperty('--scroll-progress', progress);
   }
-  if (navbar) {
-    navbar.classList.toggle('is-scrolled', window.scrollY > 12);
+
+  const isScrolled = sy > 12;
+  if (navbar && isScrolled !== layout.lastScrolled) {
+    layout.lastScrolled = isScrolled;
+    navbar.classList.toggle('is-scrolled', isScrolled);
   }
 
   if (problemsSection) {
-    const rect = problemsSection.getBoundingClientRect();
-    const totalTravel = Math.max(1, rect.height + vh * 0.5);
-    const traveled = vh * 0.85 - rect.top;
-    const secP = Math.min(1, Math.max(0, traveled / totalTravel));
-    problemsSection.style.setProperty('--problems-p', secP.toFixed(3));
-    if (problemsScrollFill) {
-      problemsScrollFill.style.setProperty('--problems-p', secP.toFixed(3));
+    const traveled = vh * 0.85 - (layout.problemsDocTop - sy);
+    const secP = Math.min(1, Math.max(0, traveled / layout.problemsTotalTravel)).toFixed(3);
+    if (secP !== layout.lastProblemsP) {
+      layout.lastProblemsP = secP;
+      problemsSection.style.setProperty('--problems-p', secP);
+      if (problemsScrollFill) {
+        problemsScrollFill.style.setProperty('--problems-p', secP);
+      }
     }
   }
 
-  probCards.forEach((card, idx) => {
+  const startBase = vh * 0.94;
+  const endY = vh * 0.38;
+  layout.probCards.forEach((m) => {
     if (prefersReducedMotion) {
-      card.style.setProperty('--card-p', '1');
-      card.classList.add('is-scroll-engaged');
+      if (m.lastP !== '1') {
+        m.lastP = '1';
+        m.el.style.setProperty('--card-p', '1');
+        m.el.classList.add('is-scroll-engaged');
+      }
       return;
     }
-    const r = card.getBoundingClientRect();
-    const rowOffset = (idx % 2) * 36;
-    const startY = vh * 0.94 - rowOffset;
-    const endY = vh * 0.38;
-    const rawP = (startY - r.top) / Math.max(1, startY - endY);
-    const cardP = Math.min(1, Math.max(0, rawP));
-    card.style.setProperty('--card-p', cardP.toFixed(3));
-    card.classList.toggle('is-scroll-engaged', cardP >= 0.58 && r.bottom > vh * 0.16);
+    const top = m.docTop - sy;
+    const bottom = top + m.height;
+    const startY = startBase - m.rowOffset;
+    const rawP = (startY - top) / Math.max(1, startY - endY);
+    const cardPNum = Math.min(1, Math.max(0, rawP));
+    const cardP = cardPNum.toFixed(3);
+    if (cardP !== m.lastP) {
+      m.lastP = cardP;
+      m.el.style.setProperty('--card-p', cardP);
+    }
+    const engaged = cardPNum >= 0.58 && bottom > vh * 0.16;
+    if (engaged !== m.lastEngaged) {
+      m.lastEngaged = engaged;
+      m.el.classList.toggle('is-scroll-engaged', engaged);
+    }
   });
 }
 
-window.addEventListener(
-  'scroll',
-  () => {
-    if (!scrollRaf) {
-      scrollRaf = requestAnimationFrame(updateScrollChrome);
-    }
-  },
-  { passive: true }
-);
-window.addEventListener('resize', () => {
+function scheduleScrollChrome() {
   if (!scrollRaf) {
     scrollRaf = requestAnimationFrame(updateScrollChrome);
   }
-});
+}
+
+measureLayout();
 updateScrollChrome();
 
-// Astryx UISegmentedControl Sliding Nav Pill
-if (navLinksWrap && navPill) {
-  const navLinks = navLinksWrap.querySelectorAll('a');
+window.addEventListener('scroll', scheduleScrollChrome, { passive: true });
+window.addEventListener(
+  'resize',
+  () => {
+    measureLayout();
+    scheduleScrollChrome();
+  },
+  { passive: true }
+);
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => {
+    measureLayout();
+    scheduleScrollChrome();
+  }).observe(document.body);
+}
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => {
+    measureLayout();
+    scheduleScrollChrome();
+  });
+}
+window.addEventListener(
+  'load',
+  () => {
+    measureLayout();
+    scheduleScrollChrome();
+  },
+  { once: true }
+);
+
+// Astryx UISegmentedControl Sliding Nav Pill (rects pre-cached)
+if (navLinksWrap && navPill && navLinks.length) {
   const moveNavPill = (linkEl) => {
-    navPill.style.width = `${linkEl.offsetWidth}px`;
-    navPill.style.height = `${linkEl.offsetHeight}px`;
-    navPill.style.transform = `translate3d(${linkEl.offsetLeft}px, ${linkEl.offsetTop}px, 0)`;
+    let r = layout.navRects.get(linkEl);
+    if (!r) {
+      r = { left: linkEl.offsetLeft, top: linkEl.offsetTop, width: linkEl.offsetWidth, height: linkEl.offsetHeight };
+      layout.navRects.set(linkEl, r);
+    }
+    navPill.style.width = `${r.width}px`;
+    navPill.style.height = `${r.height}px`;
+    navPill.style.transform = `translate3d(${r.left}px, ${r.top}px, 0)`;
     navPill.style.opacity = '1';
   };
   navLinks.forEach((link) => {
@@ -171,22 +270,27 @@ if (navLinksWrap && navPill) {
   });
 }
 
-// Astryx UISegmentedControl Sliding Lens for Scenario Picker (segmented.ts spring)
+// Astryx UISegmentedControl Sliding Lens for Scenario Picker (cero reflows síncronos)
 function movePickerLens(cardEl, immediate = false) {
   if (!pickerGrid || !pickerLens || !cardEl) return;
+  let r = layout.pickerRects.get(cardEl);
+  if (!r || immediate) {
+    r = { left: cardEl.offsetLeft, top: cardEl.offsetTop, width: cardEl.offsetWidth, height: cardEl.offsetHeight };
+    layout.pickerRects.set(cardEl, r);
+  }
   if (immediate) {
     pickerLens.style.transition = 'none';
   }
-  const x = cardEl.offsetLeft;
-  const y = cardEl.offsetTop;
-  pickerLens.style.width = `${cardEl.offsetWidth}px`;
-  pickerLens.style.height = `${cardEl.offsetHeight}px`;
-  pickerLens.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  pickerLens.style.width = `${r.width}px`;
+  pickerLens.style.height = `${r.height}px`;
+  pickerLens.style.transform = `translate3d(${r.left}px, ${r.top}px, 0)`;
   pickerGrid.dataset.lensReady = 'true';
   if (immediate) {
-    // Force layout flush so subsequent selections animate smoothly
-    void pickerLens.offsetWidth;
-    pickerLens.style.transition = '';
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        pickerLens.style.transition = '';
+      });
+    });
   }
 }
 
@@ -196,15 +300,20 @@ if (initialActiveCard) {
 }
 if (typeof ResizeObserver !== 'undefined' && pickerGrid) {
   const ro = new ResizeObserver(() => {
+    measureLayout();
     const cur = pickerGrid.querySelector('.picker-card.active');
     if (cur) movePickerLens(cur, true);
   });
   ro.observe(pickerGrid);
 } else {
-  window.addEventListener('resize', () => {
-    const cur = document.querySelector('.picker-card.active');
-    if (cur) movePickerLens(cur, true);
-  });
+  window.addEventListener(
+    'resize',
+    () => {
+      const cur = document.querySelector('.picker-card.active');
+      if (cur) movePickerLens(cur, true);
+    },
+    { passive: true }
+  );
 }
 
 // Bidirectional scroll reveal observer with Astryx stagger
@@ -215,7 +324,7 @@ if ('IntersectionObserver' in window) {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
           entry.target.classList.add('is-visible');
-        } else if (entry.boundingClientRect.top > (window.innerHeight || 800) * 0.88) {
+        } else if (entry.boundingClientRect.top > layout.vh * 0.88) {
           entry.target.classList.remove('is-visible');
         }
       });
@@ -223,42 +332,122 @@ if ('IntersectionObserver' in window) {
     { threshold: 0.08 }
   );
   revealEls.forEach((el) => observer.observe(el));
+
+  const heroMark = document.querySelector('.h-mark');
+  if (heroMark && !prefersReducedMotion) {
+    let markLeftViewport = false;
+    new IntersectionObserver(
+      (entries) => {
+        const visible = entries[0].isIntersecting;
+        if (!visible) {
+          markLeftViewport = true;
+          heroMark.classList.remove('is-replay');
+          heroMark.classList.add('is-waiting');
+        } else if (markLeftViewport) {
+          markLeftViewport = false;
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              heroMark.classList.remove('is-waiting');
+              heroMark.classList.add('is-replay');
+            });
+          });
+        }
+      },
+      { threshold: 0.2 }
+    ).observe(heroMark);
+  }
 } else {
   revealEls.forEach((el) => el.classList.add('is-visible'));
 }
 
-// Astryx Pointer Specular Spotlight on Monochrome Cards & Stage
+// Astryx Pointer Specular Spotlight (rAF-throttled + cached rect on enter)
 if (window.matchMedia('(pointer: fine)').matches && !prefersReducedMotion) {
+  let spotEl = null;
+  let spotRect = null;
+  let spotDirty = true;
+  let spotX = 0;
+  let spotY = 0;
+  let spotRaf = 0;
+
+  window.addEventListener(
+    'scroll',
+    () => {
+      spotDirty = true;
+    },
+    { passive: true }
+  );
+
+  function flushSpotlight() {
+    spotRaf = 0;
+    if (!spotEl) return;
+    if (spotDirty || !spotRect) {
+      spotRect = spotEl.getBoundingClientRect();
+      spotDirty = false;
+    }
+    if (!spotRect.width || !spotRect.height) return;
+    const x = (((spotX - spotRect.left) / spotRect.width) * 100).toFixed(1);
+    const y = (((spotY - spotRect.top) / spotRect.height) * 100).toFixed(1);
+    spotEl.style.setProperty('--mx', `${x}%`);
+    spotEl.style.setProperty('--my', `${y}%`);
+  }
+
   document.querySelectorAll('.card, .card-dark').forEach((card) => {
-    card.addEventListener('mousemove', (e) => {
-      const rect = card.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 100;
-      const y = ((e.clientY - rect.top) / rect.height) * 100;
-      card.style.setProperty('--mx', `${x.toFixed(1)}%`);
-      card.style.setProperty('--my', `${y.toFixed(1)}%`);
+    card.addEventListener('pointerenter', () => {
+      spotEl = card;
+      spotRect = card.getBoundingClientRect();
+      spotDirty = false;
+    });
+    card.addEventListener(
+      'pointermove',
+      (e) => {
+        if (e.pointerType !== 'mouse') return;
+        spotEl = card;
+        spotX = e.clientX;
+        spotY = e.clientY;
+        if (!spotRaf) spotRaf = requestAnimationFrame(flushSpotlight);
+      },
+      { passive: true }
+    );
+    card.addEventListener('pointerleave', () => {
+      if (spotEl === card) {
+        spotEl = null;
+        spotRect = null;
+      }
     });
   });
 
   if (iphoneTilt && !iphoneTilt.classList.contains('is-3d')) {
     const bezel = iphoneTilt.querySelector('.iphone-bezel');
-    iphoneTilt.addEventListener('mousemove', (e) => {
-      if (iphoneTilt.classList.contains('is-3d')) return;
-      const rect = iphoneTilt.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width - 0.5;
-      const y = (e.clientY - rect.top) / rect.height - 0.5;
-      iphoneTilt.style.transform = `rotateY(${x * 8}deg) rotateX(${-y * 8}deg)`;
-      if (bezel) {
-        bezel.style.setProperty('--mx', `${((x + 0.5) * 100).toFixed(1)}%`);
-        bezel.style.setProperty('--my', `${((y + 0.5) * 100).toFixed(1)}%`);
+    let tiltRect = null;
+    iphoneTilt.addEventListener('pointerenter', () => {
+      if (!iphoneTilt.classList.contains('is-3d')) {
+        tiltRect = iphoneTilt.getBoundingClientRect();
       }
     });
-    iphoneTilt.addEventListener('mouseleave', () => {
+    iphoneTilt.addEventListener(
+      'pointermove',
+      (e) => {
+        if (iphoneTilt.classList.contains('is-3d')) return;
+        const rect = tiltRect || iphoneTilt.getBoundingClientRect();
+        tiltRect = rect;
+        const x = (e.clientX - rect.left) / rect.width - 0.5;
+        const y = (e.clientY - rect.top) / rect.height - 0.5;
+        iphoneTilt.style.transform = `rotateY(${x * 8}deg) rotateX(${-y * 8}deg)`;
+        if (bezel) {
+          bezel.style.setProperty('--mx', `${((x + 0.5) * 100).toFixed(1)}%`);
+          bezel.style.setProperty('--my', `${((y + 0.5) * 100).toFixed(1)}%`);
+        }
+      },
+      { passive: true }
+    );
+    iphoneTilt.addEventListener('pointerleave', () => {
+      tiltRect = null;
       iphoneTilt.style.transform = 'rotateY(0deg) rotateX(0deg)';
     });
   }
 }
 
-// Astryx AnimatedLayout Edge Reveal for FAQ <details>
+// Astryx AnimatedLayout Edge Reveal for FAQ <details> (sin clipPath redundante)
 document.querySelectorAll('.faq-item').forEach((details) => {
   const summary = details.querySelector('summary');
   const body = details.querySelector('.faq-body');
@@ -279,44 +468,47 @@ document.querySelectorAll('.faq-item').forEach((details) => {
       isExpanding = true;
       details.open = true;
       const fullHeight = body.scrollHeight;
+      body.style.willChange = 'height, opacity';
       anim = body.animate(
         [
-          { height: '0px', opacity: 0.001, clipPath: 'inset(0 0 100% 0)' },
-          { height: `${fullHeight}px`, opacity: 1, clipPath: 'inset(0 0 0% 0)' },
+          { height: '0px', opacity: 0.001 },
+          { height: `${fullHeight}px`, opacity: 1 },
         ],
         { duration: 340, easing: 'cubic-bezier(0.24, 1, 0.4, 1)' }
       );
-      anim.onfinish = () => {
+      const cleanup = () => {
         isExpanding = false;
         anim = null;
         body.style.height = '';
+        body.style.willChange = 'auto';
       };
+      anim.onfinish = cleanup;
+      anim.oncancel = cleanup;
     } else if (isExpanding || details.open) {
       isExpanding = false;
       isClosing = true;
       const startHeight = body.offsetHeight;
+      body.style.willChange = 'height, opacity';
       anim = body.animate(
         [
-          { height: `${startHeight}px`, opacity: 1, clipPath: 'inset(0 0 0% 0)' },
-          { height: '0px', opacity: 0.001, clipPath: 'inset(0 0 100% 0)' },
+          { height: `${startHeight}px`, opacity: 1 },
+          { height: '0px', opacity: 0.001 },
         ],
         { duration: 210, easing: 'cubic-bezier(0.3, 0, 0.6, 0.6)' }
       );
-      anim.onfinish = () => {
-        details.open = false;
+      const cleanup = (finish) => {
+        if (finish) details.open = false;
         isClosing = false;
         anim = null;
+        body.style.willChange = 'auto';
       };
+      anim.onfinish = () => cleanup(true);
+      anim.oncancel = () => cleanup(false);
     }
   });
 });
 
-// Estado en vivo del dock, sincronizado con lo que pasa en el teléfono
-function setStageChip(label, done = false) {
-  if (!dockStatus) return;
-  if (dockStatusStep) dockStatusStep.textContent = label;
-  dockStatus.classList.toggle('is-done', done);
-}
+function setStageChip() {}
 
 function appendMessage(html, type = 'bot', extraClass = '') {
   const div = document.createElement('div');
@@ -727,9 +919,9 @@ function runTextLiveFlow(cfg) {
       const end = Math.ceil((fullText.length * s) / steps);
       setInputText(fullText.slice(0, end));
       if (kbKeys.length) {
-        kbKeys.forEach((k) => k.classList.remove('is-hit'));
-        const hitKey = kbKeys[(s * 7) % kbKeys.length];
-        if (hitKey) hitKey.classList.add('is-hit');
+        if (lastHitKey) lastHitKey.classList.remove('is-hit');
+        lastHitKey = kbKeys[(s * 7) % kbKeys.length] || null;
+        if (lastHitKey) lastHitKey.classList.add('is-hit');
       }
     }, splashDelay + s * stepMs);
   }
@@ -737,7 +929,10 @@ function runTextLiveFlow(cfg) {
   const typingDoneAt = splashDelay + steps * stepMs;
 
   scheduleDemo(() => {
-    kbKeys.forEach((k) => k.classList.remove('is-hit'));
+    if (lastHitKey) {
+      lastHitKey.classList.remove('is-hit');
+      lastHitKey = null;
+    }
     if (replayBtn) replayBtn.classList.add('is-tapping');
   }, typingDoneAt + 140);
 
@@ -831,22 +1026,13 @@ pickerCards.forEach((card) => {
   card.addEventListener('click', () => selectPreset(card.dataset.preset));
 });
 
-// Selector único de escenario: mantiene sincronizados el picker, el dock y el teléfono
+// Selector de escenario: mantiene sincronizados el picker y el teléfono
 function selectPreset(preset, { reveal = false } = {}) {
   pickerCards.forEach((c) => {
     const on = c.dataset.preset === preset;
     c.classList.toggle('active', on);
     c.setAttribute('aria-checked', String(on));
     if (on) movePickerLens(c);
-  });
-  dockChips.forEach((chip) => {
-    const on = chip.dataset.preset === preset;
-    chip.classList.toggle('active', on);
-    chip.setAttribute('aria-pressed', String(on));
-    if (on && dockChipsWrap && dockChipsWrap.scrollWidth > dockChipsWrap.clientWidth) {
-      const left = chip.offsetLeft - (dockChipsWrap.clientWidth - chip.offsetWidth) / 2;
-      dockChipsWrap.scrollTo({ left, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
-    }
   });
   renderPreset(preset);
   if (reveal) revealPhone();
@@ -856,22 +1042,12 @@ function selectPreset(preset, { reveal = false } = {}) {
 function revealPhone() {
   if (!iphoneTilt) return;
   const rect = iphoneTilt.getBoundingClientRect();
-  const vh = window.innerHeight || 1;
+  const vh = layout.vh;
   const topLimit = navbar ? navbar.offsetHeight : 0;
   const visible = Math.min(rect.bottom, vh) - Math.max(rect.top, topLimit);
   if (visible >= Math.min(rect.height, vh - topLimit) * 0.8) return;
   const target = window.scrollY + rect.top - Math.max(topLimit + 8, (vh - rect.height) / 2);
   window.scrollTo({ top: Math.max(0, target), behavior: prefersReducedMotion ? 'auto' : 'smooth' });
-}
-
-dockChips.forEach((chip) => {
-  chip.addEventListener('click', () => selectPreset(chip.dataset.preset, { reveal: true }));
-});
-if (dockReplay) {
-  dockReplay.addEventListener('click', () => {
-    renderPreset(activePreset);
-    revealPhone();
-  });
 }
 
 if (recSendBtn) {
@@ -905,8 +1081,9 @@ if (lockBtn) {
     if (!notice) return;
     chat.scrollTo({ top: 0, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
     notice.classList.remove('is-highlighted');
-    void notice.offsetWidth;
-    notice.classList.add('is-highlighted');
+    requestAnimationFrame(() => {
+      notice.classList.add('is-highlighted');
+    });
     scheduleDemo(() => notice.classList.remove('is-highlighted'), 950);
   });
 }

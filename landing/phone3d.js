@@ -22,15 +22,15 @@ const R = 47;
 const BEVEL = 4;
 const SCREEN_W = 289;
 const SCREEN_H = 627;
-const VIEW_H = 800;
-const MAX_SCALE = 1.08;
+const VIEW_H = 740;
+const MAX_SCALE = 1.0;
 const FOV = 30;
-const PHONE_Y = 24;
-const FLOOR_GAP = 26;
+const PHONE_Y = 6;
+const FLOOR_GAP = 24;
 // La escena se adelanta respecto al plano de proyección del CSS3D: el navegador no
 // registra clics en lo que queda detrás de ese plano al inclinar el teléfono.
 const Z_FRONT = 190;
-const SPRING = { stiffness: 120, damping: 14 };
+const SPRING = { stiffness: 168, damping: 18 };
 
 function roundedRect(w, h, r) {
   const s = new THREE.Shape();
@@ -65,6 +65,28 @@ function brushedTexture() {
   return tex;
 }
 
+// Sombra de contacto suave procedural en canvas: evita shadow maps costosos en cada frame
+function contactShadowTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.save();
+  ctx.translate(128, 64);
+  ctx.scale(1, 0.5);
+  const grad = ctx.createRadialGradient(0, 0, 8, 0, 0, 118);
+  grad.addColorStop(0, 'rgba(0, 0, 0, 0.34)');
+  grad.addColorStop(0.32, 'rgba(0, 0, 0, 0.2)');
+  grad.addColorStop(0.68, 'rgba(0, 0, 0, 0.06)');
+  grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(-128, -128, 256, 256);
+  ctx.restore();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 function buildPhone() {
   const phone = new THREE.Group();
 
@@ -90,6 +112,13 @@ function buildPhone() {
     clearcoat: 0.35,
     clearcoatRoughness: 0.5,
   });
+  const plateauGlass = new THREE.MeshPhysicalMaterial({
+    color: 0x1b1b1f,
+    metalness: 0.25,
+    roughness: 0.22,
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.5,
+  });
   const lensGlass = new THREE.MeshPhysicalMaterial({
     color: 0x05060c,
     metalness: 0.2,
@@ -106,17 +135,18 @@ function buildPhone() {
     bevelEnabled: true,
     bevelThickness: BEVEL,
     bevelSize: BEVEL,
-    bevelSegments: 8,
-    curveSegments: 28,
+    bevelSegments: 5,
+    curveSegments: 20,
   });
   bodyGeo.translate(0, 0, -(D - BEVEL * 2) / 2);
-  const body = new THREE.Mesh(bodyGeo, titanium);
-  body.castShadow = true;
-  phone.add(body);
+  phone.add(new THREE.Mesh(bodyGeo, titanium));
 
   // Cristal frontal (el marco negro alrededor de la pantalla)
-  const glassShape = roundedRect(W - BEVEL * 2 + 1.2, H - BEVEL * 2 + 1.2, R - BEVEL + 0.6);
-  const front = new THREE.Mesh(new THREE.ShapeGeometry(glassShape, 28), frontGlass);
+  const glassGeo = new THREE.ShapeGeometry(
+    roundedRect(W - BEVEL * 2 + 1.2, H - BEVEL * 2 + 1.2, R - BEVEL + 0.6),
+    20
+  );
+  const front = new THREE.Mesh(glassGeo, frontGlass);
   front.position.z = D / 2 + 0.2;
   phone.add(front);
 
@@ -125,7 +155,7 @@ function buildPhone() {
   back.rotation.y = Math.PI;
   phone.add(back);
 
-  const backPlate = new THREE.Mesh(new THREE.ShapeGeometry(glassShape, 28), backGlass);
+  const backPlate = new THREE.Mesh(glassGeo, backGlass);
   backPlate.position.z = D / 2 + 0.2;
   back.add(backPlate);
 
@@ -137,29 +167,32 @@ function buildPhone() {
       bevelEnabled: true,
       bevelThickness: 1.6,
       bevelSize: 1.6,
-      bevelSegments: 4,
-      curveSegments: 20,
+      bevelSegments: 3,
+      curveSegments: 16,
     }),
-    backGlass.clone()
+    plateauGlass
   );
-  plateau.material.roughness = 0.22;
   plateau.position.set(camX, camY, D / 2 + 0.2);
-  plateau.castShadow = true;
   back.add(plateau);
 
+  // Geometrías compartidas para las 3 lentes
   const lensZ = D / 2 + 4;
+  const lensRingGeo = new THREE.CylinderGeometry(25, 26, 7, 36);
+  const lensGlassGeo = new THREE.CircleGeometry(21, 36);
+  const lensIrisGeo = new THREE.RingGeometry(8, 14, 32);
+  const lensCoreGeo = new THREE.SphereGeometry(8, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2);
   const addLens = (x, y) => {
-    const ring = new THREE.Mesh(new THREE.CylinderGeometry(25, 26, 7, 48), titanium);
+    const ring = new THREE.Mesh(lensRingGeo, titanium);
     ring.rotation.x = Math.PI / 2;
     ring.position.set(x, y, lensZ + 2);
     back.add(ring);
-    const glass = new THREE.Mesh(new THREE.CircleGeometry(21, 48), lensGlass);
+    const glass = new THREE.Mesh(lensGlassGeo, lensGlass);
     glass.position.set(x, y, lensZ + 5.7);
     back.add(glass);
-    const iris = new THREE.Mesh(new THREE.RingGeometry(8, 14, 40), matteBlack);
+    const iris = new THREE.Mesh(lensIrisGeo, matteBlack);
     iris.position.set(x, y, lensZ + 5.8);
     back.add(iris);
-    const core = new THREE.Mesh(new THREE.SphereGeometry(8, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), lensGlass);
+    const core = new THREE.Mesh(lensCoreGeo, lensGlass);
     core.rotation.x = Math.PI / 2;
     core.scale.y = 0.35;
     core.position.set(x, y, lensZ + 5.8);
@@ -170,29 +203,33 @@ function buildPhone() {
   addLens(camX + 27, camY);
 
   const flash = new THREE.Mesh(
-    new THREE.CircleGeometry(7.5, 32),
+    new THREE.CircleGeometry(7.5, 24),
     new THREE.MeshStandardMaterial({ color: 0xe9e4d4, roughness: 0.35, emissive: 0x2a2820 })
   );
   flash.position.set(camX + 34, camY + 38, lensZ + 0.3);
   back.add(flash);
-  const lidar = new THREE.Mesh(new THREE.CircleGeometry(6.5, 32), matteBlack);
+  const lidar = new THREE.Mesh(new THREE.CircleGeometry(6.5, 24), matteBlack);
   lidar.position.set(camX + 34, camY - 38, lensZ + 0.3);
   back.add(lidar);
 
-  // Botones físicos en relieve
+  // Botones físicos en relieve (comparten geometría los de igual largo)
+  const btnGeos = new Map();
   const addButton = (side, topPx, len) => {
-    const geo = new THREE.ExtrudeGeometry(roundedRect(8.4, len, 4.2), {
-      depth: 1.9,
-      bevelEnabled: true,
-      bevelThickness: 0.8,
-      bevelSize: 0.8,
-      bevelSegments: 3,
-      curveSegments: 10,
-    });
+    let geo = btnGeos.get(len);
+    if (!geo) {
+      geo = new THREE.ExtrudeGeometry(roundedRect(8.4, len, 4.2), {
+        depth: 1.9,
+        bevelEnabled: true,
+        bevelThickness: 0.8,
+        bevelSize: 0.8,
+        bevelSegments: 2,
+        curveSegments: 8,
+      });
+      btnGeos.set(len, geo);
+    }
     const btn = new THREE.Mesh(geo, titanium);
     btn.rotation.y = (side * Math.PI) / 2;
     btn.position.set(side * (W / 2 - 0.4), H / 2 - topPx - len / 2, 0);
-    btn.castShadow = true;
     phone.add(btn);
   };
   addButton(-1, 112, 24); // botón de acción
@@ -218,20 +255,29 @@ function buildPhone() {
 
 function init() {
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const glareEl = screenEl.querySelector('.screen-glare');
+  const lensEl = screenEl.querySelector('.island-cam');
 
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance' });
   renderer.setClearColor(0x000000, 0);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.VSMShadowMap;
+  renderer.shadowMap.enabled = false;
 
   const scene = new THREE.Scene();
 
   // Iluminación de estudio basada en imagen (HDRI procedural, sin red)
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  const envScene = new RoomEnvironment();
+  scene.environment = pmrem.fromScene(envScene, 0.04).texture;
+  envScene.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+      else obj.material.dispose();
+    }
+  });
   pmrem.dispose();
 
   const key = new THREE.DirectionalLight(0xffffff, 2.4);
@@ -241,26 +287,16 @@ function init() {
   rim.position.set(520, 180, -260);
   scene.add(rim);
 
-  // Luz cenital que proyecta la sombra del teléfono sobre el piso
-  const top = new THREE.DirectionalLight(0xffffff, 0.5);
-  top.position.set(-40, 900, -70);
-  top.castShadow = true;
-  top.shadow.mapSize.set(512, 512);
-  top.shadow.camera.left = -460;
-  top.shadow.camera.right = 460;
-  top.shadow.camera.top = 460;
-  top.shadow.camera.bottom = -460;
-  top.shadow.camera.near = 200;
-  top.shadow.camera.far = 2000;
-  top.shadow.radius = 26;
-  top.shadow.blurSamples = 25;
-  top.shadow.bias = -0.0004;
-  scene.add(top);
-
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(1500, 900), new THREE.ShadowMaterial({ opacity: 0.3 }));
+  // Sombra de contacto ligera sobre el piso (sin renderizar shadow maps en cada frame)
+  const floorMat = new THREE.MeshBasicMaterial({
+    map: contactShadowTexture(),
+    transparent: true,
+    opacity: 0.92,
+    depthWrite: false,
+  });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(460, 210), floorMat);
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = PHONE_Y - H / 2 - FLOOR_GAP;
-  floor.receiveShadow = true;
 
   const world = new THREE.Group();
   world.position.z = Z_FRONT;
@@ -294,6 +330,20 @@ function init() {
   screenEl.style.pointerEvents = 'auto';
 
   let viewW = 0;
+  let vpCenterX = 0;
+  let vpDocCenterY = 0;
+  let winW = window.innerWidth || 1200;
+  let winH = window.innerHeight || 800;
+
+  function measureViewport() {
+    winW = window.innerWidth || 1200;
+    winH = window.innerHeight || 800;
+    const r = viewport.getBoundingClientRect();
+    vpCenterX = r.left + r.width * 0.5;
+    vpDocCenterY = r.top + window.scrollY + r.height * 0.5;
+  }
+
+  let fit = 1;
   function resize() {
     const w = viewport.clientWidth;
     const h = viewport.clientHeight || VIEW_H;
@@ -311,37 +361,49 @@ function init() {
     renderer.setSize(w, h, false);
     cssRenderer.setSize(w, h);
     // Más grande en escritorio; en pantallas angostas se ajusta al ancho sin tocar el desvanecido lateral
-    const fit = Math.min(MAX_SCALE, (w - 46) / W);
+    fit = Math.min(MAX_SCALE, (w - 46) / W);
     rigGroup.scale.setScalar(fit);
     floor.position.y = PHONE_Y - (H / 2) * fit - FLOOR_GAP;
+    measureViewport();
     needsRender = true;
   }
 
-  // Rig con resortes: comienza de perfil (-Math.PI / 2) en el tope y al hacer scroll gira al frente (0)
-  const PROFILE_YAW = -Math.PI / 2 + 0.03;
-  const rig = { yaw: reduceMotion ? 0 : PROFILE_YAW, pitch: 0, vyaw: 0, vpitch: 0 };
+  // Comienza en ángulo 3/4 (-0.86 rad, mostrando pantalla + canto de titanio) y gira rápido al frente (0)
+  const START_YAW = -0.86;
+  const START_PITCH = 0.07;
+  const rig = {
+    yaw: reduceMotion ? 0 : START_YAW,
+    pitch: reduceMotion ? 0 : START_PITCH,
+    vyaw: 0,
+    vpitch: 0,
+  };
   const pointer = { x: 0, y: 0, overScreen: false };
   let dragYaw = 0;
   let dragging = false;
   let dragLastX = 0;
   let scrollP = 0;
-  let unfoldP = reduceMotion ? 1 : 0;
+  let introStart = 0;
   let kickDir = 1;
   let needsRender = true;
   let visible = true;
   let raf = 0;
   let last = 0;
-  let lastGlare = '';
+  let lastGlareX = NaN;
+  let lastGlareO = NaN;
+  let lastLensX = NaN;
 
   const finePointer = window.matchMedia('(pointer: fine)').matches;
   if (finePointer && heroEl && !reduceMotion) {
-    heroEl.addEventListener('pointermove', (e) => {
-      if (e.pointerType !== 'mouse') return;
-      const r = viewport.getBoundingClientRect();
-      pointer.x = THREE.MathUtils.clamp((e.clientX - (r.left + r.width / 2)) / (window.innerWidth * 0.5), -1, 1);
-      pointer.y = THREE.MathUtils.clamp((e.clientY - (r.top + r.height / 2)) / (window.innerHeight * 0.6), -1, 1);
-      pointer.overScreen = screenEl.contains(e.target);
-    });
+    heroEl.addEventListener(
+      'pointermove',
+      (e) => {
+        if (e.pointerType !== 'mouse') return;
+        pointer.x = THREE.MathUtils.clamp((e.clientX - vpCenterX) / (winW * 0.5), -1, 1);
+        pointer.y = THREE.MathUtils.clamp((e.clientY - (vpDocCenterY - window.scrollY)) / (winH * 0.6), -1, 1);
+        pointer.overScreen = screenEl.contains(e.target);
+      },
+      { passive: true }
+    );
     heroEl.addEventListener('pointerleave', () => {
       pointer.x = 0;
       pointer.y = 0;
@@ -374,39 +436,45 @@ function init() {
   viewport.addEventListener('pointerup', endDrag);
   viewport.addEventListener('pointercancel', endDrag);
 
-  // Cada cambio de escenario gira ligeramente el teléfono
+  // Cada cambio de escenario da un giro rápido y ágil al teléfono
   window.addEventListener('zaldo:preset', () => {
     if (reduceMotion) return;
     kickDir = -kickDir;
-    rig.vyaw += kickDir * 2.2;
-    rig.vpitch -= 0.5;
+    rig.vyaw += kickDir * 2.8;
+    rig.vpitch -= 0.55;
   });
 
-  // Giro por scroll: en scrollY=0 comienza de perfil (PROFILE_YAW) y al bajar se pone de frente (0)
+  // Leve respuesta al scroll sin perder la vista frontal (cero reflows en scroll)
   function readScroll() {
-    const sy = Math.max(0, window.scrollY || window.pageYOffset || 0);
-    const rawUnfold = THREE.MathUtils.clamp(sy / 180, 0, 1);
-    unfoldP = reduceMotion ? 1 : rawUnfold * rawUnfold * (3 - 2 * rawUnfold);
-    scrollP = 0;
+    const offset = (winH * 0.5 - (vpDocCenterY - window.scrollY)) / winH;
+    const dead = 0.14;
+    const eased = Math.sign(offset) * Math.max(0, Math.abs(offset) - dead);
+    scrollP = THREE.MathUtils.clamp(eased * 1.2, -1, 1);
   }
   window.addEventListener('scroll', readScroll, { passive: true });
-  window.addEventListener('resize', readScroll);
-  readScroll();
-  rig.yaw = reduceMotion ? 0 : PROFILE_YAW * (1 - unfoldP);
+  window.addEventListener('resize', () => {
+    resize();
+    measureViewport();
+    readScroll();
+  }, { passive: true });
 
   function frame(now) {
     raf = 0;
+    if (!introStart) introStart = now;
     const dt = Math.min(0.05, last ? (now - last) / 1000 : 1 / 60);
     last = now;
-    resize();
 
     const t = now / 1000;
     const hoverK = pointer.overScreen ? 0.3 : 1;
     const idle = reduceMotion ? 0 : 1;
-    const baseYaw = PROFILE_YAW * (1 - unfoldP);
-    const pointerInfluence = unfoldP * 0.32 * hoverK;
-    const targetYaw = baseYaw + pointer.x * pointerInfluence + dragYaw + Math.sin(t * 0.55) * 0.018 * idle * unfoldP;
-    const targetPitch = pointer.y * 0.12 * hoverK * unfoldP + Math.cos(t * 0.45) * 0.01 * idle * unfoldP;
+    // Mantiene la pose inicial 3/4 por 130ms y luego suelta el resorte rápido hacia el frente (0)
+    const inIntroHold = !reduceMotion && now - introStart < 130;
+    const targetYaw = inIntroHold
+      ? START_YAW
+      : pointer.x * 0.34 * hoverK + scrollP * 0.22 + dragYaw + Math.sin(t * 0.55) * 0.024 * idle;
+    const targetPitch = inIntroHold
+      ? START_PITCH
+      : pointer.y * 0.14 * hoverK - Math.abs(scrollP) * 0.06 + Math.cos(t * 0.45) * 0.01 * idle;
 
     // Integración semi-implícita en subpasos para estabilidad
     const steps = 2;
@@ -420,14 +488,32 @@ function init() {
 
     phone.rotation.set(rig.pitch, rig.yaw, 0);
     phone.position.y = Math.sin(t * 0.9) * 4 * idle;
+    // Compensa el acercamiento en perspectiva del canto lateral cuando está de perfil
+    rigGroup.position.z = -Math.sin(Math.min(Math.PI / 2, Math.abs(rig.yaw))) * 115;
 
-    // Reflejo del cristal y de la lente frontal acoplados al giro
-    const glare = `${(34 - rig.yaw * 150).toFixed(1)}%`;
-    if (glare !== lastGlare) {
-      lastGlare = glare;
-      screenEl.style.setProperty('--glare-x', glare);
-      screenEl.style.setProperty('--glare-o', Math.min(0.9, 0.3 + Math.abs(rig.yaw) * 1.6).toFixed(2));
-      screenEl.style.setProperty('--lens-x', `${(38 - rig.yaw * 60).toFixed(1)}%`);
+    // Sombra de contacto modulada por giro y flotación sin shadow maps
+    floor.scale.set(fit * (0.45 + 0.55 * Math.abs(Math.cos(rig.yaw))), fit, 1);
+    floorMat.opacity = 0.88 - phone.position.y * 0.015;
+
+    // Reflejo del cristal por compositor (transform/opacity) y lente cuantizada
+    if (glareEl) {
+      const gx = Math.round((-16 - rig.yaw * 150) * 2.89 * 2) / 2;
+      const go = Math.round(Math.min(0.9, 0.3 + Math.abs(rig.yaw) * 1.6) * 50) / 50;
+      if (gx !== lastGlareX) {
+        lastGlareX = gx;
+        glareEl.style.transform = `translate3d(${gx}px, 0, 0)`;
+      }
+      if (go !== lastGlareO) {
+        lastGlareO = go;
+        glareEl.style.opacity = String(go);
+      }
+    }
+    if (lensEl) {
+      const lx = Math.round((38 - rig.yaw * 60) * 2) / 2;
+      if (lx !== lastLensX) {
+        lastLensX = lx;
+        lensEl.style.setProperty('--lens-x', `${lx}%`);
+      }
     }
 
     renderer.render(scene, camera);
@@ -457,11 +543,21 @@ function init() {
   if (typeof ResizeObserver !== 'undefined') {
     new ResizeObserver(() => {
       resize();
+      measureViewport();
+      readScroll();
       if (needsRender) start();
-    }).observe(viewport);
+    }).observe(heroEl || viewport);
+  }
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      measureViewport();
+      readScroll();
+    });
   }
 
   resize();
+  measureViewport();
+  readScroll();
   start();
 
   window.ZaldoPhone3D = { rig, renderer, phone, camera };
