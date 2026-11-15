@@ -429,7 +429,7 @@ test("la cuenta, la ayuda y lo que se le pide recordar", async () => {
   const deps = flow(store, fakePey(), { peyBankAccountId: "01ACC", testMaxCents: 100 });
   assert.equal(
     textOf(await say(deps, calls(["account_status", {}]))),
-    "Los cobros caen en la cuenta con CLABE terminada en 5713: activa en CoDi.\nEstás en modo de prueba: máximo $1.00 por cobro. Ese dinero va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve.\nTope de cobros de hoy: te quedan $5,000.00 de $5,000.00.",
+    "Los cobros caen en la cuenta con CLABE terminada en 5713: activa en CoDi.\nEstás en modo de prueba: máximo $1.00 por cobro. Ese dinero va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve. Para recibir en tu banco dime \"registrar mi cuenta\".\nTope de cobros de hoy: te quedan $5,000.00 de $5,000.00.",
   );
   const plain = flow(memoryStore(), fakePey());
   assert.match(textOf(await say(plain, calls(["account_status", {}]))), /^Los cobros caen en la cuenta CoDi ligada a la llave de pey del negocio\./);

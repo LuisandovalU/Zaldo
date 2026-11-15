@@ -742,7 +742,7 @@ test("modo de prueba: la cuenta de pruebas de pey y su tope", async () => {
   assert.equal(store.listCharges(OWNER).length, 0);
   const small = textOf(await say(deps, OWNER, calls(["prepare_charge", { amount: 0.01, concept: "prueba" }])));
   starts(small, "Cobro por $0.01");
-  assert.ok(small.endsWith("Modo de prueba: el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve."));
+  assert.match(small, /Modo de prueba: el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve\. Para recibir en tu banco dime "registrar mi cuenta"\.$/);
 
   // Fuera del modo de prueba, ni tope ni aviso.
   const normal = textOf(await say(flow(memoryStore(), fakePey()), OWNER, calls(["prepare_charge", { amount: 150, concept: "uñas" }])));
