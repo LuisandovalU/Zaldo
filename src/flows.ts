@@ -675,6 +675,69 @@ function demoWelcome(deps: FlowDeps, owner: string, nameBefore: string | null, n
   return [{ kind: "choice", to: owner, text, options: choices([REGISTER, KEEP_DEMO_LABEL]) }];
 }
 
+/** Un saludo y nada más: sin pregunta, sin monto, sin pedir nada. */
+const GREETING_ONLY =
+  /^[¡!\s]*(hola+|ola+|holi+s?|buenas|buenos d[ií]as|buen d[ií]a|buenas tardes|buenas noches|qu[eé] onda|qu[eé] tal|qu[eé] hubo|quiubo|hey|hi|hello|saludos)(?![a-záéíóúñ])[^?¿\d]{0,25}$/i;
+const ASKS_SOMETHING = /cobr|\bqr\b|\blink\b|pag|vend|compr|cu[aá]nto|c[oó]mo|qui[eé]n|para qu[eé]|qu[eé] (es|eres|haces|puedes)|precio|cuesta|ayuda|registr/i;
+
+/** Lo que Zaldo dice de sí mismo la primera vez: qué es y para qué sirve, en cuatro renglones. */
+export const INTRO = [
+  "¡Qué onda! Soy *Zaldo*, tu caja aquí en WhatsApp 👋",
+  "",
+  "Me escribes o me mandas una nota de voz y yo:",
+  "- *Cobro con CoDi:* le llega a tu cliente a su celular, o te doy un QR o un link",
+  "- *Cobro solo cada semana o cada mes:* rentas, mensualidades, suscripciones",
+  "- *Te aviso en cuanto te pagan*",
+  "- *Llevo tu caja:* ventas, gastos, fiado y tu corte del día",
+  "",
+  "¿Cómo te llamas?",
+].join("\n");
+
+/**
+ * La primera impresión no se deja a la suerte: a quien llega saludando se le
+ * dice lo mismo, completo y corto. Si llega pidiendo algo, eso va primero y
+ * lo atiende el modelo.
+ */
+function firstHello(deps: FlowDeps, owner: string, clean: string, now: number): Outbound[] | null {
+  if (deps.store.getProfile(owner).name) return null;
+  if (deps.store.recentTurns(owner).some((turn) => turn.role === "assistant")) return null;
+  if (!GREETING_ONLY.test(clean) || ASKS_SOMETHING.test(clean)) return null;
+  remember(deps.store, owner, "assistant", INTRO, now);
+  return [{ kind: "text", to: owner, text: INTRO }];
+}
+
+/** La respuesta a "¿cómo te llamas?": el puro nombre, o "soy/me llamo" y el nombre. */
+const NAME_REPLY =
+  /^(?:(soy|me llamo|mi nombre es|me dicen)\s+)?([A-Za-zÁÉÍÓÚÑáéíóúñü]{2,15}(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñü]{2,15}){0,2})[\s.!]*$/i;
+/** Palabras que no son un nombre aunque vengan solas. */
+const NOT_A_NAME = new Set(
+  "quiero necesito puedo tengo como cómo para por que qué quien quién cual cuál donde dónde cuando cuándo cuanto cuánto si sí no ok okay va vale gracias hola ola buenas buenos dias días tardes noches nada luego despues después espera ayuda menu menú corte cobra cobrar cobro cobrale cóbrale qr link pagar pago registrar seguir demo borrar cancelar confirmar bien bueno oye zaldo eres un una el la los las de del mi tu su es y o a en con ya hoy mañana test prueba probar botones nel simon simón nadie secreto adivina"
+    .split(" "),
+);
+
+/**
+ * Se le preguntó cómo se llama y contestó con su nombre: lo guarda la caja,
+ * sin depender de que el modelo se acuerde de hacerlo.
+ */
+function nameAnswer(deps: FlowDeps, owner: string, clean: string, now: number): Outbound[] | null {
+  const profile = deps.store.getProfile(owner);
+  if (profile.name) return null;
+  if (!/c[oó]mo te llamas/i.test(lastAssistant(deps.store, owner)?.content ?? "")) return null;
+  const found = NAME_REPLY.exec(clean);
+  if (!found?.[2]) return null;
+  const words = found[2].trim().split(/\s+/);
+  if (words.some((word) => NOT_A_NAME.has(word.toLowerCase()))) return null;
+  // "Soy dentista" es un oficio: con "soy" el nombre tiene que venir con mayúscula.
+  if (found[1] && /^soy$/i.test(found[1]) && !/^[A-ZÁÉÍÓÚÑ]/.test(words[0] ?? "")) return null;
+  const name = words.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+  deps.store.setProfile({ ...profile, name });
+  const welcome = demoWelcome(deps, owner, null, now, []);
+  if (welcome) return welcome;
+  const text = `¡Mucho gusto, ${name}! Dime qué cobramos: por ejemplo "cobra 150" o "cóbrale 200 a Ana".`;
+  remember(deps.store, owner, "assistant", text, now);
+  return [{ kind: "text", to: owner, text }];
+}
+
 const WIPE = /^(borra|borrar|elimina|eliminar|reinicia|reiniciar|resetea|resetear) (mi cuenta|mis datos|todo|este chat)[\s.!]*$|^empezar de cero[\s.!]*$/i;
 const WIPE_ASK =
   "¿Borro todo lo de este chat? Se van tu nombre, tu catálogo, tus clientes, tus apuntes y la conversación. Los cobros que ya salieron y la cuenta de banco que registraste se quedan.";
@@ -782,6 +845,10 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
   remember(deps.store, owner, "user", clean, now);
   const tested = buttonTest(deps, owner, clean, now);
   if (tested) return tested;
+  const hello = firstHello(deps, owner, clean, now);
+  if (hello) return hello;
+  const named = nameAnswer(deps, owner, clean, now);
+  if (named) return named;
   const nameBefore = deps.store.getProfile(owner).name;
   const direct = shortcut(clean);
   let result: Awaited<ReturnType<typeof runAgent>>;

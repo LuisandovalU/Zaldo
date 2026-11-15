@@ -657,14 +657,14 @@ test("lo que rompió el jurado simulado ya no se rompe", async () => {
   starts(textOf(await say(deps, shy, "cobra 150")), "Cobro por $150.00\nLo paga: quien escanee el QR");
   assert.equal(asked, 2);
   await say(deps, never, "cancelar");
-  // Con "cóbrale a Ana" sí es válido pedir su celular: no se interviene.
+  // Con "cóbrale a Beto" sí hace falta su celular, pero lo pide la caja: así el cobro queda a medias y no se pierde.
   asked = 0;
   const fair: Completer = async () => {
     asked += 1;
     return { content: "¿Cuál es el celular de Beto? Son 10 dígitos.", toolCalls: [] };
   };
-  assert.equal(textOf(await say(deps, fair, "cóbrale 90 a Beto")), "¿Cuál es el celular de Beto? Son 10 dígitos.");
-  assert.equal(asked, 1);
+  starts(textOf(await say(deps, fair, "cóbrale 90 a Beto")), "No tengo el celular de Beto. ¿Cuál es?");
+  assert.equal(asked, 2);
 });
 
 test("con dinero de por medio, sí es sí y lo demás no se adivina", async () => {
@@ -704,3 +704,55 @@ test("con dinero de por medio, sí es sí y lo demás no se adivina", async () =
   starts(textOf(await say(deps, never, "confirmar")), "Listo, ya salió.");
   assert.equal(pey.pushes.length, 1);
 });
+
+test("lo que falló en chats reales: se presenta, guarda el nombre y no pierde lo que la persona dijo", async () => {
+  const store = memoryStore();
+  const deps = flow(store, fakePey(), { testMaxCents: 100 });
+  const NEW = "5215522222222";
+  // Un saludo: la presentación es fija y dice para qué sirve, sin pasar por el modelo.
+  const hello = textOf(await say(deps, never, "Ola jochis", NEW));
+  starts(hello, "¡Qué onda! Soy *Zaldo*");
+  assert.match(hello, /cada semana o cada mes/);
+  assert.match(hello, /¿Cómo te llamas\?$/);
+  // El nombre lo guarda la caja, y de ahí sale la bienvenida al modo demo.
+  starts(textOf(await say(deps, never, "ana", NEW)), "¡Mucho gusto, Ana!");
+  assert.equal(store.getProfile(NEW).name, "Ana");
+  // La persona dijo el monto y el modelo lo vuelve a pedir: la caja arma el cobro (aquí, avisa del tope).
+  let asked = 0;
+  const shy: Completer = async () => {
+    asked += 1;
+    return { content: "Dime cuánto deseas cobrarle a Juan. Recuerda que el máximo por ahora es $1.00.", toolCalls: [] };
+  };
+  starts(textOf(await say(deps, shy, "Cóbrale a Juan 9000 pesos de renta cada mes.", NEW)), "Esta caja está en modo de prueba");
+  assert.equal(asked, 2);
+  // El modelo baja el monto al tope cuando llega el celular: sigue siendo el cobro de 9000.
+  const again = await say(deps, calls(["prepare_charge", { amount: 1, payerName: "Juan", payerPhone: "3312345678" }]), "su cel es 3312345678", NEW);
+  starts(textOf(again), "Esta caja está en modo de prueba");
+  // Con un centavo sale la tarjeta, con todo lo que se había dicho.
+  const card = cardIn(await say(deps, calls(["prepare_charge", { amount: 0.01 }]), "Cobrar 1 centavo", NEW)).text;
+  starts(card, "Cobro por $0.01");
+  assert.match(card, /Concepto: renta/);
+  assert.match(card, /Juan · 33 1234 5678/);
+  assert.match(card, /Se repite: cada mes/);
+  // "Un cobro de 150 en QR": el número pegado a la orden es el monto, aunque el modelo mande otro.
+  await say(deps, never, "cancelar", NEW);
+  starts(
+    textOf(await say(deps, calls(["prepare_charge", { amount: 1, method: "qr" }]), "Hola por favor mándame un cobro de 150 en QR", NEW)),
+    "Esta caja está en modo de prueba",
+  );
+});
+
+test("una queja se contesta con frases y sin cierres de call center", async () => {
+  const store = memoryStore();
+  const deps = flow(store, fakePey());
+  const card = cardIn(await say(deps, calls(["prepare_charge", { amount: 50, method: "qr" }]), "hazme un qr de 50"));
+  await handleInbound(deps, { type: "button", owner: OWNER, messageId: "queja-1", buttonId: card.yesId });
+  const status = textOf(await say(deps, calls(["charge_status", {}]), "Ya pagué y no se refleja mi pago. ¿Eres ladrón?"));
+  starts(status, "Lo acabo de revisar con CoDi.\nEl QR de $50.00 salió hace un momento y todavía no aparece pagado.");
+  assert.match(status, /revisa en la app del banco/);
+  // Una búsqueda con palabras que la persona no dijo cae en lo que hay abierto, no en "no tengo ese dato".
+  starts(textOf(await say(deps, calls(["charge_status", { query: "yo" }]), "no me llegó nada")), "Lo acabo de revisar con CoDi.");
+  const closer: Completer = async () => ({ content: "Aquí no se hacen pedidos: soy la caja de quien vende. ¿Te gustaría hacer algún cobro?", toolCalls: [] });
+  assert.equal(textOf(await say(deps, closer, "puedo encargar una hamburguesa")), "Aquí no se hacen pedidos: soy la caja de quien vende.");
+});
+
