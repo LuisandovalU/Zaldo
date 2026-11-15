@@ -2118,8 +2118,8 @@ export async function runAgent(input: {
         reply &&
         !tools.length &&
         !nudged &&
-        REFUSES_CHARGE.test(reply) &&
-        !/^\s*ese no lo armo/i.test(reply) &&
+        // Negarse a un cobro lo decide la caja con sus reglas, no el modelo: una renta o una colegiatura sí se cobran.
+        (REFUSES_CHARGE.test(reply) || /^\s*es[eo] no lo (armo|cobro|mando|hago)/i.test(reply)) &&
         !chargeViolation(recentUserText(input.store, input.owner).slice(-1)[0] ?? "", input.store.getProfile(input.owner).business ?? "")
       ) {
         nudged = true;
