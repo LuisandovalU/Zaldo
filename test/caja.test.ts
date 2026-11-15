@@ -275,7 +275,7 @@ test("el catálogo arma el ticket: precios y total los pone la caja", async () =
   assert.equal(store.listCharges(OWNER).at(-1)?.amountCents, 60_000);
 
   // Lo que no está en el catálogo no se inventa…
-  const unknown = textOf(await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "tinte" }] }])));
+  const unknown = textOf(await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "tinte" }] }]), "cobra un tinte"));
   assert.equal(unknown, 'No tengo "tinte" en tu catálogo. ¿A cuánto lo cobro? Dime el precio y lo dejo guardado.');
   // …salvo que la persona haya dicho el precio.
   await say(deps, OWNER, calls(["prepare_charge", { items: [{ name: "tinte", price: 450 }, { name: "corte" }] }]));
@@ -349,7 +349,7 @@ test("un chat sin número pide el celular una sola vez", async () => {
   assert.match(textOf(next), /tu celular 33 2205 4352/);
 
   // El nombre y el negocio se guardan sin pisar el celular.
-  const named = textOf(await say(deps, LID, calls(["set_profile", { name: "Isabel" }])));
+  const named = textOf(await say(deps, LID, calls(["set_profile", { name: "Isabel" }]), "me llamo Isabel"));
   assert.match(named, /se llama Isabel/);
   const shop = textOf(await say(deps, LID, calls(["set_business", { business: "Uñas Isa", dailyGoal: 2000 }])));
   assert.equal(shop, "Tu negocio: Uñas Isa. Meta del día: $0.00 de $2,000.00 (0%), faltan $2,000.00.");
@@ -594,7 +594,7 @@ test("las cifras salen del libro, no del modelo", async () => {
     return { content: "Apunté tu gasto de $400.00 en el súper.", toolCalls: [] };
   };
   const honest = textOf(await say(deps, OWNER, stubborn));
-  assert.match(honest, /^No lo pude apuntar/);
+  assert.match(honest, /^No me quedó claro qué hacer/);
   assert.equal(asked, 2);
   assert.equal(store.listNotes(OWNER).filter((note) => note.kind === "gasto").length, 1);
 

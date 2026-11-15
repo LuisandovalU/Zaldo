@@ -517,3 +517,100 @@ test("aguanta: el modelo se cae, llegan mensajes encimados o demasiados", async 
   clock = NOW + 61_000;
   assert.equal(textOf(await say(flood, echo, "ya")), "ok");
 });
+
+test("lo que rompió el jurado simulado ya no se rompe", async () => {
+  const store = memoryStore();
+  const pey = fakePey();
+  const deps = flow(store, pey);
+
+  // "Cobra 150 de uñas" mandado como producto sin catálogo: es un cobro suelto, no una pregunta.
+  const loose = await say(deps, calls(["prepare_charge", { items: [{ name: "uñas", qty: 1 }], amount: 150 }]), "cobra 150 de uñas");
+  assert.equal(textOf(loose), "Cobro por $150.00\nConcepto: uñas\nLo paga: quien escanee el QR con la app de su banco\nPor: QR CoDi");
+  // "2 cortes a 150 cada uno": el precio es por pieza, aunque el modelo mande el total mal.
+  const each = await say(deps, calls(["prepare_charge", { items: [{ name: "corte", qty: 2 }], amount: 150 }]), "cobra 2 cortes a 150 cada uno");
+  starts(textOf(each), "Cobro por $300.00\nConcepto: 2 cortes\n");
+  // Sin monto dicho, sigue preguntando el precio.
+  starts(textOf(await say(deps, calls(["prepare_charge", { items: [{ name: "gringa" }], amount: 60 }]), "cobra una gringa")), 'No tengo "gringa" en tu catálogo.');
+
+  // Un celular sin nombre es de un cliente, no del dueño.
+  const toNumber = await say(deps, calls(["prepare_charge", { amount: 300, payerPhone: "5522223333", method: "push" }]), "cobra 300 al 5522223333");
+  assert.equal(textOf(toNumber), "Cobro por $300.00\nLe llega a: el celular 55 2222 3333, en la app de su banco\nPor: notificación CoDi");
+  starts(textOf(await say(deps, never, "sí, mándalo")), "Listo, ya salió. Al 55 2222 3333 le llega la notificación CoDi por $300.00");
+  assert.equal(store.listContacts(OWNER).length, 0);
+
+  // "Cóbrame" con celular conocido es notificación a su banco, aunque el modelo diga QR.
+  const mine = await say(deps, calls(["prepare_charge", { amount: 150, payerName: "yo", payerPhone: "5511111111", method: "qr" }]), "cóbrame 150");
+  assert.match(textOf(mine), /Le llega a: tu celular 55 1111 1111/);
+  // Con frase natural se cancela el cobro, y no se borra ningún apunte.
+  await say(deps, calls(["add_note", { kind: "gasto", amount: 80, concept: "hielo", category: "insumos" }]), "gasté 80 en hielo");
+  await say(deps, calls(["prepare_charge", { amount: 150 }]), "cobra 150");
+  assert.equal(textOf(await say(deps, never, "ya no, gracias")), "Cancelé el cobro de $150.00. No se envió nada.");
+  assert.equal(store.listNotes(OWNER).length, 1);
+  // Si el modelo usa undo_last para cancelar, también cancela el cobro y no toca la caja.
+  await say(deps, calls(["prepare_charge", { amount: 150 }]), "cobra 150");
+  assert.equal(textOf(await say(deps, calls(["undo_last", {}]), "ay no, espérame tantito que siempre no era eso")), "Cancelé el cobro de $150.00. No se envió nada.");
+  assert.equal(store.listNotes(OWNER).length, 1);
+  starts(textOf(await say(deps, calls(["cancel_charge", {}]), "cancela")), "No hay ningún cobro");
+  // "No, mejor 200" no es cancelar: es otro cobro, y lo decide el modelo.
+  await say(deps, calls(["prepare_charge", { amount: 150 }]), "cobra 150");
+  starts(textOf(await say(deps, calls(["prepare_charge", { amount: 200 }]), "no, mejor 200")), "Cobro por $200.00");
+  await say(deps, never, "cancelar");
+
+  clock += 61_000; // otro minuto: esta prueba manda más de veinte mensajes
+  // El perfil es del dueño: ni el nombre ni el celular de un cliente entran ahí.
+  const before = store.getProfile(OWNER);
+  const wrong = textOf(await say(deps, calls(["set_profile", { name: "Ana", phone: "5522223333" }]), "cóbrale 500 de renta a Ana cada mes, su cel es 5522223333"));
+  starts(wrong, "ERROR: ese celular no es de quien escribe");
+  starts(textOf(await say(deps, calls(["set_profile", { name: "Cliente" }]), "cobra 150")), "ERROR: set_profile es solo para el nombre de quien escribe");
+  assert.deepEqual(store.getProfile(OWNER), before);
+  assert.match(textOf(await say(deps, calls(["set_profile", { name: "Toro" }]), "hola, soy Toro y vendo tacos")), /se llama Toro/);
+  // Y el "de renta" que el modelo dejó fuera sí llega al cobro.
+  const rent = await say(deps, calls(["prepare_charge", { amount: 500, payerName: "Ana", payerPhone: "5522223333", every: "mensual" }]), "cóbrale 500 de renta a Ana cada mes, su cel es 5522223333");
+  starts(textOf(rent), "Cobro por $500.00\nConcepto: renta\n");
+  await say(deps, never, "cancelar");
+
+  // "Corte" es el corte de caja aunque haya un producto que se llame corte. Y no pasa por el modelo.
+  await say(deps, calls(["set_product", { name: "corte", price: 150 }]), "agrega corte a 150");
+  starts(textOf(await say(deps, never, "corte")), "Corte de hoy\n");
+  starts(textOf(await say(deps, never, "dame el corte de la semana")), "Corte de esta semana\n");
+  starts(textOf(await say(deps, never, "¿qué puedes hacer?")), "Esto hago por ti:");
+  // "Cobra un corte" sí es una venta.
+  starts(textOf(await say(deps, calls(["prepare_charge", { items: [{ name: "corte" }] }]), "cobra un corte")), "Cobro por $150.00\n1 × corte");
+  await say(deps, never, "cancelar");
+
+  clock += 61_000; // otro minuto: esta prueba manda más de veinte mensajes
+  // Tres cosas en un mensaje: lo que contestaron las otras dos sale antes de la tarjeta.
+  const many = await say(
+    deps,
+    calls(["set_product", { name: "café", price: 35 }], ["prepare_charge", { items: [{ name: "café", qty: 2 }] }], ["get_balance", {}]),
+    "agrega café a 35, cobra 2 cafés y dime el corte",
+  );
+  assert.deepEqual(many.map((message) => message.kind), ["text", "buttons"]);
+  starts(textOf(many), "En tu catálogo: café a $35.00.\nCorte de hoy\n");
+  assert.equal(store.listCharges(OWNER).at(-1)?.concept, "2 cafés");
+  await say(deps, never, "cancelar");
+
+  // Montos imposibles los contesta la caja.
+  starts(textOf(await say(deps, calls(["prepare_charge", { amount: -50 }]), "cobra -50")), "Ese monto no se puede cobrar: tiene que ser mayor a cero.");
+
+  clock += 61_000; // otro minuto: esta prueba manda más de veinte mensajes
+  // Si el modelo pide un celular para un cobro normal, se le manda de vuelta a cobrar por QR.
+  let asked = 0;
+  const shy: Completer = async ({ messages }) => {
+    asked += 1;
+    if (asked === 1) return { content: "¿A qué celular te mando la notificación? Son 10 dígitos.", toolCalls: [] };
+    assert.equal(messages.at(-1)?.role, "system");
+    return { content: null, toolCalls: [call("prepare_charge", { amount: 150 })] };
+  };
+  starts(textOf(await say(deps, shy, "cobra 150")), "Cobro por $150.00\nLo paga: quien escanee el QR");
+  assert.equal(asked, 2);
+  await say(deps, never, "cancelar");
+  // Con "cóbrale a Ana" sí es válido pedir su celular: no se interviene.
+  asked = 0;
+  const fair: Completer = async () => {
+    asked += 1;
+    return { content: "¿Cuál es el celular de Beto? Son 10 dígitos.", toolCalls: [] };
+  };
+  assert.equal(textOf(await say(deps, fair, "cóbrale 90 a Beto")), "¿Cuál es el celular de Beto? Son 10 dígitos.");
+  assert.equal(asked, 1);
+});

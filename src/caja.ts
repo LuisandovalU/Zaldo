@@ -87,7 +87,17 @@ function percent(part: number, whole: number): number {
 
 /** "2 uñas acrílicas, 1 gel": el ticket en una línea. */
 export function itemsText(items: ChargeItem[]): string {
-  return items.map((item) => `${item.qty} ${item.name}`).join(", ");
+  return items.map((item) => `${item.qty} ${item.qty > 1 ? plural(item.name) : item.name}`).join(", ");
+}
+
+/** "corte" → "cortes", "tamal" → "tamales". Los nombres de varias palabras se quedan como están. */
+export function plural(name: string): string {
+  if (name.includes(" ") || name.length < 3) return name;
+  const last = name.slice(-1).toLowerCase();
+  if (last === "s" || last === "x") return name;
+  if ("aeiouáéó".includes(last)) return `${name}s`;
+  if (last === "z") return `${name.slice(0, -1)}ces`;
+  return `${name}es`;
 }
 
 /** Lo que falta por pagar de una deuda. */

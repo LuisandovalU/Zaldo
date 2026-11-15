@@ -8,6 +8,7 @@ import {
   frequencyLabel,
   nextOccurrence,
   normalizeCategory,
+  plural,
   normalizeFrequency,
   normalizePeriod,
   openDebts,
@@ -64,18 +65,20 @@ CÓMO HABLAS
 - Si sabes el nombre de la persona, úsalo de vez en cuando.
 - Nunca escribas "¿en qué puedo ayudarte?", "¿algo más que necesites?", "estoy aquí para asistirte" ni cierres con preguntas genéricas. Si hace falta una pregunta, que sea concreta ("¿le cobro con QR o a su celular?").
 - Si es la primera vez que te escribe: preséntate ("Soy Zaldo"), di en una línea qué haces y pregúntale cómo se llama. Si en ese primer mensaje ya pide algo (un cobro, un QR), hazlo de una vez y preséntate en la misma respuesta: lo primero es atender.
-- En cuanto diga su nombre o el de su negocio, aunque sea en su primer mensaje, guárdalos con set_profile y set_business antes de contestar.
+- En cuanto diga SU PROPIO nombre ("soy Toro", "me llamo Isabel") o el de su negocio, guárdalos con set_profile y set_business antes de contestar. set_profile es solo para quien te escribe: el nombre y el celular de un CLIENTE nunca van ahí, van en payerName y payerPhone del cobro. Nunca guardes nombres inventados ("Cliente", "Usuario", "yo").
 - Nunca inventes un precio ni un monto. Si no está en el catálogo y la persona no lo dijo, pregúntalo.
-- Las preguntas sobre ti (qué eres, para qué sirves, qué sabes hacer, si es seguro) sí las contestas, con gusto y en dos o tres líneas.
+- Las preguntas sobre ti (qué eres, para qué sirves, qué sabes hacer, si es seguro) sí las contestas, con gusto y en dos o tres líneas. Si preguntan quién te hizo: el equipo de Zaldo, para el Hackatón México 2026, sobre el API de pey.
 
 LO QUE NO HACES
-- No pagas, no transfieres, no prestas y no guardas dinero: tú COBRAS y llevas la caja. El dinero llega directo a la cuenta del negocio por CoDi. Si dicen "quiero pagar" o "hacer un pago", acláralo en una línea y ofrece lo que sí haces: generar el cobro CoDi para que lo pague desde la app de su banco.
+- No pagas, no transfieres, no prestas y no guardas dinero: tú COBRAS y llevas la caja. Si piden transferir, enviar o prestar dinero a alguien, di que no y no ofrezcas cobrarle a esa persona. El dinero llega directo a la cuenta del negocio por CoDi. Si dicen "quiero pagar" o "hacer un pago", acláralo en una línea y ofrece lo que sí haces: generar el cobro CoDi para que lo pague desde la app de su banco.
 - Solo hablas del negocio: ventas, cobros, catálogo, clientes, gastos y el corte. Si preguntan otra cosa (definiciones, tareas, recetas, noticias, programación), no la contestes: di en una línea, con humor ligero, que lo tuyo es la caja y regresa a lo que sí haces.
 - Nunca pidas ni aceptes NIP, contraseñas, tokens, números de tarjeta ni CLABE. Para cobrar solo hace falta un celular de 10 dígitos. Si te los ofrecen, di que eso no se le da a nadie por chat, tampoco a ti.
 - No eres un producto oficial de Banxico ni de pey: usas CoDi a través del API de pey. No recomiendas inversiones ni créditos.
 
 COBRAR (prepare_charge)
-- Para cobrar solo hace falta el MONTO. No hace falta vender un producto ni tener catálogo: "cobra 150" basta. El concepto es opcional: si lo dicen, mándalo; si no, no lo preguntes.
+- Para cobrar solo hace falta el MONTO. No hace falta vender un producto ni tener catálogo: "cobra 150", "un QR de 50" o "link de 250" bastan. Llama a prepare_charge de inmediato: NO preguntes concepto, ni celular, ni a quién. El concepto es opcional: si lo dicen ("150 de uñas"), mándalo en concept; si no, nada.
+- NUNCA pidas un celular para un cobro normal. El celular solo hace falta en tres casos: "cóbrale a <alguien>" sin número guardado, "cóbrame a mí" si no sabes el suyo, y un cobro recurrente.
+- "Cobra 150 de uñas" es amount 150 y concept "uñas". No lo mandes como items salvo que "uñas" esté en el catálogo. "2 cortes a 150 cada uno" sin catálogo: items con name "corte", qty 2 y price 150.
 - Si lo que cobran está en el catálogo (míralo en el contexto), manda items con nombre y cantidad. El precio y el total los pone la caja: no mandes amount ni hagas la suma tú.
 - Si piden un producto por nombre que no está en el catálogo y no dicen el precio, pregúntalo. Cuando te lo den, haz las dos cosas en el mismo mensaje: set_product para guardarlo y prepare_charge para cobrarlo.
 - Cómo se cobra:
@@ -89,12 +92,13 @@ COBRAR (prepare_charge)
 - prepare_charge no envía nada: sale una tarjeta que la persona confirma o cancela. No digas que ya se envió. Si la persona corrige el cobro antes de confirmar ("mejor 200", "mejor por link"), llama otra vez a prepare_charge con todo: el anterior se descarta solo.
 - "Lo mismo a Luis", "otro igual", "repítelo": repeat_charge (con toName y toPhone si es para otra persona).
 - Nunca digas que ya pagaron: eso solo lo confirma el banco. Para "¿ya pagó?", "¿ya cayó?": charge_status, que le pregunta a pey en ese momento.
-- Un solo cobro por mensaje, y solo a quien lo espera: no mandes cobros en masa ni a números que la persona no te dio.
+- Un solo cobro por mensaje, y solo a quien lo espera: no mandes cobros en masa ni a números que la persona no te dio. Si piden cobrarle "a todos mis clientes", explica que cobras uno por uno y pregunta por quién empiezas.
+- "Cancélalo", "ya no", "mejor no" con un cobro por confirmar: cancel_charge. Nunca undo_last para eso.
 - No hay devoluciones desde aquí: un pago CoDi ya hecho se regresa con una transferencia desde su banco. Dilo así si lo piden.
 
 PEY EN VIVO
 - "¿Qué me han pagado?", "mis últimos pagos", "¿cuánto me cobró pey de comisión?": pey_payments. Es lo que pey registró de verdad.
-- "¿Mi cuenta ya está activa?", "¿a dónde cae el dinero?", "¿estoy en modo de prueba?": account_status.
+- "¿Mi cuenta ya está activa?", "¿a dónde cae el dinero?", "¿estoy en modo de prueba?": account_status. Nunca contestes eso de memoria.
 
 MEMORIA
 - Lo que la persona te pida recordar o te cuente de cómo trabaja (horarios, a quién le cobra cada cuándo, cómo prefiere cobrar): remember. Para olvidarlo: forget. Lo recordado sale en el contexto: úsalo sin que te lo repitan.
@@ -106,7 +110,8 @@ CATÁLOGO Y CAJA
 - Gasto del negocio ("compré 300 de esmaltes", "pagué la renta"): add_note gasto, con la categoría que mejor quede.
 - Fiado ("Ana me quedó a deber 300"): add_note deuda. "le debo 500 al proveedor": add_note debo.
 - "ya me pagó Ana": settle_debt me_pagaron. "ya le pagué al proveedor": settle_debt pague.
-- "corte", "cómo voy", "cuánto llevo vendido": get_balance con el periodo que pidan (hoy si no dicen; también ayer, semana, mes y mes_pasado).
+- "corte", "cómo voy", "cuánto llevo vendido": get_balance con el periodo que pidan (hoy si no dicen; también ayer, semana, mes y mes_pasado). "Corte" a secas es SIEMPRE el corte de caja, aunque haya un producto que se llame corte.
+- "¿Cuánto me deben?", "¿quién me debe?": get_balance; no lo contestes de memoria.
 - "mi meta de hoy es 2000" o el nombre del negocio: set_business.
 - "me equivoqué, bórralo": undo_last. Solo si piden borrar un apunte; "cancelar" un cobro no borra nada.
 - Varias cosas en un mensaje: una llamada por cada una. Usa la herramienta de inmediato con lo que te dieron; no pidas confirmación ni datos opcionales.
@@ -120,8 +125,14 @@ Persona: cómo estás?
 Zaldo: Al cien y con la caja al día. ¿Qué movemos? Por ejemplo: "cobra 2 cortes" o "agrega tinte a 450".
 Persona: quiero hacer un pago
 Zaldo: Yo no muevo tu dinero: yo cobro. Si quieres pagar algo aquí, te mando el cobro CoDi y lo aceptas en la app de tu banco. ¿De cuánto?
-Persona: 150 (y no sabes su celular)
+Persona: 150, es para pagarlo yo (y no sabes su celular)
 Zaldo: Va. ¿A qué celular te mando la notificación? Son 10 dígitos, el que usas en la app de tu banco.
+Persona: cobra 150
+Zaldo: (no escribes nada: llamas a prepare_charge con amount 150 y sale la tarjeta con el QR)
+Persona: cobra 150 de uñas
+Zaldo: (prepare_charge con amount 150 y concept "uñas")
+Persona: cóbrale 300 al 5522223333
+Zaldo: (prepare_charge con amount 300 y payerPhone "5522223333", sin payerName)
 Persona: qué es un perro?
 Zaldo: De perros no sé, de cobrar sí 🐶. Mejor dime qué vendiste y te armo el cobro.
 Persona: para qué fuiste creado?
@@ -207,6 +218,15 @@ const TOOLS = [
           method: { type: "string", enum: ["push", "qr", "link"], description: "Solo si piden cambiar la forma de cobro." },
         },
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cancel_charge",
+      description:
+        'Cancela el cobro que está esperando confirmación ("cancélalo", "ya no", "mejor no"). No borra apuntes de la caja.',
+      parameters: { type: "object", additionalProperties: false, properties: {} },
     },
   },
   {
@@ -560,6 +580,7 @@ function payerLine(charge: Charge): string {
   if (charge.method === "link") return "Lo paga: quien abra el link (CoDi o tarjeta)";
   const phone = charge.payerPhone ? prettyPhone(charge.payerPhone) : "";
   if (charge.payerName === PAYER_SELF) return `Le llega a: tu celular ${phone}, en la app de tu banco`;
+  if (isNumberLabel(charge.payerName)) return `Le llega a: el celular ${phone}, en la app de su banco`;
   return `Le llega a: ${charge.payerName} · ${phone}, en la app de su banco`;
 }
 
@@ -624,6 +645,7 @@ const FINAL_TOOLS = new Set([
   "settle_debt",
   "get_balance",
   "undo_last",
+  "cancel_charge",
   "list_recurring",
   "cancel_recurring",
   "pey_payments",
@@ -662,10 +684,20 @@ const CLAIMS_ACTION =
 
 /** El modelo rechaza un cobro por su cuenta ("el mínimo es 1 peso"). Eso solo lo decide la caja. */
 const REFUSES_CHARGE =
-  /(no (puedo|es posible|se puede)|no hago)[^.!?\n]{0,40}(cobr|generar)|(monto )?m[ií]nimo (es|debe|de|para)/i;
+  /(no (puedo|es posible|se puede)|no hago)[^.!?\n]{0,40}(cobr|generar)|(monto )?m[ií]nimo (es|debe|de|para)|fuera de (los )?rangos|no (puedo )?acept(o|ar) decimales|monto v[aá]lido/i;
+
+/** El modelo pregunta por un celular. Para un cobro normal no hace falta: sale QR. */
+const ASKS_PHONE = /\?[^?]*$/;
+const MENTIONS_PHONE = /celular|n[uú]mero de (cel|tel)|tu n[uú]mero|su n[uú]mero|10 d[ií]gitos/i;
+/** Frases donde sí hay alguien a quien mandarle el cobro: ahí pedir su celular es lo correcto. */
+const NAMES_PAYER =
+  /c[oó]bra(le|selo|les)|m[aá]nda(le|selo)|env[ií]a(le|selo)|\bcada (mes|semana|quincena|d[ií]a)|mensual|semanal|quincenal|recurrente|suscripci[oó]n|mensualidad/i;
+
+/** El modelo afirma algo de la cuenta o del modo de prueba sin haberlo consultado. */
+const CLAIMS_ACCOUNT = /(cuenta[^.!?\n]{0,40}(activa|lista|verificada))|modo de prueba/i;
 
 const NOT_DONE =
-  'No lo pude apuntar. Dímelo otra vez en una frase, por ejemplo: "gasté 300 en insumos" o "me pagaron 200 en efectivo".';
+  'No me quedó claro qué hacer con eso. Dímelo otra vez en una frase, por ejemplo: "cobra 150" o "gasté 300 en insumos".';
 
 /** Montos dichos con letra ("ciento cincuenta pesos"): no se pueden cotejar, pero se nota que dijo uno. */
 const AMOUNT_WORDS =
@@ -724,6 +756,68 @@ function spokenMoney(store: Store, owner: string): number | null {
   return found.size === 1 ? ([...found][0] ?? null) : null;
 }
 
+/** Lo que la persona escribió en sus últimos mensajes, del más viejo al más nuevo. */
+function recentUserText(store: Store, owner: string, count = 6): string[] {
+  return store
+    .recentTurns(owner)
+    .filter((turn) => turn.role === "user")
+    .slice(-count)
+    .map((turn) => turn.content);
+}
+
+const PLACEHOLDER_NAME = /^(yo|t[uú]|cliente|usuario|usuaria|desconocid[oa]|persona|due[ñn][oa]|negocio|sin nombre|n\/?a)$/i;
+
+/** ¿Dijo que ese es SU nombre ("soy Toro", "me llamo Isabel"), o contestó solo con él? */
+function saidOwnName(texts: string[], name: string): boolean {
+  const key = fold(name);
+  return texts.some((text) => {
+    const said = fold(text);
+    if (said === key) return true;
+    const at = said.indexOf(key);
+    if (at === -1) return false;
+    return /(soy|me llamo|mi nombre es|me dicen|habla|aqui|me puedes decir|dime)\s*(el |la )?$/.test(said.slice(0, at));
+  });
+}
+
+/** ¿Dijo que ese celular es el suyo, o contestó con el puro número cuando se le pidió? */
+function saidOwnPhone(texts: string[], phone: string): boolean {
+  return texts.some((text) => {
+    const digits = text.replace(/\D/g, "");
+    if (!digits.endsWith(phone) && !digits.includes(phone)) return false;
+    if (/^[\s\d()+.-]+$/.test(text)) return true;
+    return /\bmi (propio )?(cel|celular|n[uú]mero|whats|whatsapp|tel[eé]fono)\b/i.test(text) && !/\bsu (cel|celular|n[uú]mero)\b/i.test(text);
+  });
+}
+
+/** Cancela el cobro que espera confirmación. No toca la caja. */
+function cancelWaiting(store: Store, owner: string): string {
+  const waiting = store.listCharges(owner).filter((charge) => charge.status === "awaiting_confirm");
+  if (!waiting.length) {
+    return "No hay ningún cobro por confirmar. Uno que ya salió no se cancela desde aquí: si no lo pagan, vence solo.";
+  }
+  for (const charge of waiting) store.updateCharge({ ...charge, status: "cancelled" });
+  const last = waiting[waiting.length - 1];
+  const what = !last || last.openAmount ? "el cobro" : `el cobro de ${formatMxn(last.amountCents)}`;
+  return `Cancelé ${what}. No se envió nada.`;
+}
+
+/** ¿La persona pidió un QR con sus palabras? Si no, un cobro con celular va por notificación. */
+function askedForQr(texts: string[]): boolean {
+  return texts.slice(-3).some((text) => /\bqr\b|c[oó]digo|escane/i.test(text));
+}
+
+/** "150 de uñas", "500 de renta a Ana": el concepto que dijo la persona, si el modelo no lo mandó. */
+function spokenConcept(texts: string[]): string | null {
+  const last = texts[texts.length - 1] ?? "";
+  const match = /\d\s*(?:pesos\s+|varos\s+)?(?:de|por concepto de)\s+((?:la |el |los |las |un |una |unos |unas |mi |su )?[a-záéíóúñü]{3,}(?:\s+[a-záéíóúñü]{3,})?)/i.exec(last);
+  if (!match?.[1]) return null;
+  // "de renta a Ana cada mes" se queda en "renta": lo que sigue ya no es el concepto.
+  const words = match[1].split(/\s+/);
+  const stop = words.findIndex((word, index) => index > 0 && /^(para|cada|con|por|que|del|sus?|mis?|porfa|favor)$/i.test(word));
+  const concept = (stop === -1 ? words : words.slice(0, stop)).join(" ").trim();
+  return concept.length >= 3 && !/^(pesos|varos|prueba de)$/i.test(concept) ? concept : null;
+}
+
 const SELF_WORDS =
   /(c[oó]brame|c[oó]bramelo|a m[ií]\b|quiero pagar|voy a pagar|me (lo |la )?cobras|yo pago|pago yo|hacer un pago|a mi (propio )?(celular|cel|n[uú]mero))/i;
 
@@ -772,6 +866,51 @@ function ticketOf(
   return { items, totalCents: items.reduce((total, item) => total + item.qty * item.unitCents, 0) };
 }
 
+/** "55 2222 3333": así se llama en el libro a un cliente del que solo se sabe el celular. */
+export function isNumberLabel(name: string): boolean {
+  return /^\d{2} \d{4} \d{4}$/.test(name);
+}
+
+/**
+ * El modelo mandó como "productos" algo que no está en el catálogo, pero la
+ * persona sí dijo cuánto: "cobra 150 de uñas", "2 cortes a 150 cada uno".
+ * Devuelve el total y el concepto, o null si de verdad falta el precio.
+ */
+function looseCharge(
+  store: Store,
+  owner: string,
+  raw: Record<string, unknown>,
+): { cents: number; concept: string } | null {
+  const rows = (Array.isArray(raw.items) ? raw.items : [])
+    .map((entry) => {
+      const row = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+      const qty = Number(row.qty);
+      return { name: nameOf(row.name), qty: Number.isInteger(qty) && qty > 0 && qty < 100 ? qty : 1 };
+    })
+    .filter((row) => row.name);
+  if (!rows.length) return null;
+  // Si algo sí está en el catálogo es un ticket de verdad: lo que falta es el precio de lo otro.
+  if (rows.some((row) => store.findProduct(owner, row.name))) return null;
+  const texts = recentUserText(store, owner);
+  const last = texts[texts.length - 1] ?? "";
+  let cents: number | null = null;
+  // "a 150 cada uno": el precio es por pieza.
+  const unit = /\ba\s+\$?\s*(\d[\d.,]*)/i.exec(last);
+  const single = rows[0];
+  if (rows.length === 1 && single && unit?.[1] && /cada un[oa]|c\/u|por pieza|cada pieza|por cabeza/i.test(last)) {
+    const each = parsePesosToCents(unit[1].replace(/[.,]+$/, ""));
+    if (each) cents = each * single.qty;
+  }
+  if (cents === null) {
+    const given = parsePesosToCents(raw.amount);
+    if (given !== null && knownAmount(store, owner, given)) cents = given;
+  }
+  if (cents === null) cents = spokenMoney(store, owner);
+  if (cents === null) return null;
+  const concept = rows.map((row) => (row.qty > 1 ? `${row.qty} ${plural(row.name)}` : row.name)).join(", ");
+  return { cents, concept: concept.slice(0, 80) };
+}
+
 export function prepareCharge(
   store: Store,
   config: AppConfig,
@@ -781,11 +920,15 @@ export function prepareCharge(
   /** true cuando lo pide el modelo: sus montos se cotejan con lo que dijo la persona. */
   verify = false,
 ): { output: string; charge?: Charge } {
-  const ticket = ticketOf(store, owner, raw.items, verify);
-  if (ticket && "error" in ticket) {
-    return { output: ticket.direct ? `${DIRECT}${ticket.error}` : fail(ticket.error) };
+  const parsed = ticketOf(store, owner, raw.items, verify);
+  // "Cobra 150 de uñas" mandado como producto que no está en el catálogo: si
+  // la persona sí dijo el monto, es un cobro suelto y no hay nada que preguntar.
+  const loose = parsed && "error" in parsed && parsed.direct && verify ? looseCharge(store, owner, raw) : null;
+  if (parsed && "error" in parsed && !loose) {
+    return { output: parsed.direct ? `${DIRECT}${parsed.error}` : fail(parsed.error) };
   }
-  const openAmount = raw.openAmount === true && !ticket;
+  const ticket = parsed && !("error" in parsed) ? parsed : null;
+  const openAmount = raw.openAmount === true && !ticket && !loose;
   const fixed = raw.fixed === true;
   const tip = raw.tip === true;
   const every = normalizeFrequency(raw.every);
@@ -804,8 +947,11 @@ export function prepareCharge(
       output: `${DIRECT}Ese monto no lo puedo cobrar: CoDi acepta hasta $1,000,000.00 por cobro. ¿De cuánto lo hago?`,
     };
   }
-  let amount = openAmount ? 0 : ticket ? ticket.totalCents : parsePesosToCents(raw.amount);
-  if (!openAmount && !ticket && verify && (amount === null || !knownAmount(store, owner, amount))) {
+  if (!openAmount && !ticket && Number.isFinite(asNumber) && asNumber <= 0 && raw.amount !== undefined && raw.amount !== "") {
+    return { output: `${DIRECT}Ese monto no se puede cobrar: tiene que ser mayor a cero. ¿De cuánto lo hago?` };
+  }
+  let amount = openAmount ? 0 : loose ? loose.cents : ticket ? ticket.totalCents : parsePesosToCents(raw.amount);
+  if (!openAmount && !ticket && !loose && verify && (amount === null || !knownAmount(store, owner, amount))) {
     // El modelo mandó una cifra que nadie dijo ("0.01" convertido en 1). Si la
     // persona escribió un solo monto, ese es; si no, la caja lo pregunta.
     amount = spokenMoney(store, owner);
@@ -825,40 +971,48 @@ export function prepareCharge(
       output: `${DIRECT}Esta caja está en modo de prueba: por ahora cobro máximo ${formatMxn(config.testMaxCents)} por cobro, porque el pago va a la cuenta de pruebas de pey, no a tu banco, y no se devuelve. Para probar dime, por ejemplo: "cobra 1 centavo de prueba".`,
     };
   }
+  const said = verify ? recentUserText(store, owner) : [];
   let concept = conceptOf(raw.concept);
   if (!concept && ticket) {
     const text = itemsText(ticket.items);
     concept = text.length <= 80 ? text : `${ticket.items.reduce((n, item) => n + item.qty, 0)} productos`;
   }
+  if (!concept && loose) concept = loose.concept;
+  // El modelo a veces deja fuera el "de renta" que la persona sí dijo.
+  if (!concept && verify) concept = spokenConcept(said);
   // Se puede cobrar sin decir por qué: el concepto es opcional.
   if (!concept) concept = DEFAULT_CONCEPT;
 
   let name = nameOf(raw.payerName);
   if (name.length > 40) return { output: fail("el nombre es demasiado largo.") };
   let self = isSelf(name);
+  const mine = ownPhone(store, owner);
   // "cobra 2 cortes" es una venta a un cliente: sale QR. Al celular del dueño solo si él lo pidió.
   const demoted = self && verify && !askedForSelf(store, owner);
   if (demoted) {
     self = false;
     name = "";
   }
-  const typedPhone =
-    !demoted && typeof raw.payerPhone === "string" && raw.payerPhone.trim() ? raw.payerPhone : "";
+  const rawPhone = typeof raw.payerPhone === "string" && raw.payerPhone.trim() ? raw.payerPhone : "";
+  // Si dijo "yo" sin que nadie lo pidiera y el número es el del dueño, se descarta: es un cobro a un cliente.
+  const typedPhone = demoted && toTenDigits(rawPhone) === mine ? "" : rawPhone;
   let phone = toTenDigits(typedPhone);
   if (typedPhone && !phone) return { output: fail("ese celular no tiene 10 dígitos. Pídelo otra vez.") };
   if (self && phone && !store.getProfile(owner).phone) {
     // Su propio celular se pregunta una sola vez.
     store.setProfile({ ...store.getProfile(owner), phone });
   }
-  if (!phone && self) phone = ownPhone(store, owner);
+  if (!phone && self) phone = mine;
   if (!phone && name && !self) phone = store.findContact(owner, name)?.phone ?? null;
 
   const asked = raw.method;
+  // Un QR solo si lo pidieron con sus palabras: con celular de por medio, lo natural es la notificación.
+  const wantsQr = asked === "qr" && (!verify || !(phone || name) || askedForQr(said));
   let method: ChargeMethod;
   if (fixed || openAmount) method = "qr";
   else if (every) method = "push";
   else if (tip) method = "link";
-  else if (asked === "qr" || asked === "link" || (asked === "push" && !demoted)) method = asked;
+  else if (wantsQr || asked === "link" || (asked === "push" && !demoted)) method = asked as ChargeMethod;
   else method = phone || name ? "push" : "qr";
 
   if (every && !phone) {
@@ -875,8 +1029,11 @@ export function prepareCharge(
     }
     return { output: fail(`no tengo el celular de ${name}. Pídelo (10 dígitos) o ofrece un QR.`) };
   }
-  if (method === "push") name = self || !name ? PAYER_SELF : name;
-  else {
+  if (method === "push") {
+    // Un celular sin nombre que no es el del dueño es de un cliente: se le llama por su número.
+    if (self || (!name && phone === mine)) name = PAYER_SELF;
+    else if (!name) name = prettyPhone(phone ?? "");
+  } else {
     name = self ? PAYER_SELF : name || PAYER_OPEN;
     phone = null;
   }
@@ -937,7 +1094,9 @@ export function prepareCharge(
     if (stale.status === "awaiting_confirm") store.updateCharge({ ...stale, status: "cancelled" });
   }
   store.insertCharge(charge);
-  if (name !== PAYER_SELF && name !== PAYER_OPEN && phone) store.upsertContact({ owner, name, phone });
+  if (name !== PAYER_SELF && name !== PAYER_OPEN && phone && !isNumberLabel(name)) {
+    store.upsertContact({ owner, name, phone });
+  }
   return { output: "Cobro preparado. La tarjeta para confirmar ya sale en el chat. No digas que ya se envió.", charge };
 }
 
@@ -947,7 +1106,8 @@ function addNote(store: Store, owner: string, now: number, raw: Record<string, u
     return fail("el apunte es gasto, ingreso, deuda o debo.");
   }
   const amount = parsePesosToCents(raw.amount);
-  const concept = conceptOf(raw.concept);
+  // Una venta en efectivo no necesita decir de qué fue.
+  const concept = conceptOf(raw.concept) ?? (kind === "ingreso" ? "venta" : null);
   if (amount === null || !concept) return fail("falta monto o concepto.");
   const who = nameOf(raw.who).slice(0, 40) || null;
   const note: Note = {
@@ -968,7 +1128,9 @@ function addNote(store: Store, owner: string, now: number, raw: Record<string, u
   if (kind === "ingreso") {
     store.insertNote(note);
     const goal = goalLine(store, owner, now);
-    return `Apuntado: venta en efectivo de ${formatMxn(amount)} · ${concept}.${goal ? ` Meta del día: ${goal}.` : ""}`;
+    // "venta en efectivo · venta en efectivo" no dice nada: el concepto solo sale si aporta.
+    const what = ["venta", "efectivo", "venta en efectivo", "pago en efectivo", "pago"].includes(fold(concept)) ? "" : ` · ${concept}`;
+    return `Apuntado: venta en efectivo de ${formatMxn(amount)}${what}.${goal ? ` Meta del día: ${goal}.` : ""}`;
   }
   if (!who) return fail("falta el nombre de la otra persona.");
   store.insertNote({ ...note, paidCents: 0 });
@@ -1040,6 +1202,8 @@ function execute(
           .join("\n"),
       };
     }
+    case "cancel_charge":
+      return { output: cancelWaiting(store, owner) };
     case "list_recurring": {
       const plans = store.listRecurrings(owner).filter((plan) => plan.active);
       if (!plans.length) {
@@ -1126,10 +1290,33 @@ function execute(
     }
     case "set_profile": {
       const profile = store.getProfile(owner);
-      const name = nameOf(raw.name).slice(0, 40);
+      const said = recentUserText(store, owner);
+      let name = nameOf(raw.name).slice(0, 40);
+      // El perfil es de quien escribe. Un nombre inventado, o el de un cliente, no entra.
+      if (name && (PLACEHOLDER_NAME.test(name) || !saidOwnName(said, name))) {
+        if (!raw.phone) {
+          return {
+            output: fail(
+              "set_profile es solo para el nombre de quien escribe, y solo si lo dijo (\"soy…\", \"me llamo…\"). Si es un cliente, va en payerName del cobro.",
+            ),
+          };
+        }
+        name = "";
+      }
       const typed = typeof raw.phone === "string" && raw.phone.trim() ? raw.phone : "";
-      const phone = toTenDigits(typed);
+      let phone = toTenDigits(typed);
       if (typed && !phone) return { output: fail("ese celular no tiene 10 dígitos.") };
+      // Su celular solo si dijo que es suyo, o si contestó con el puro número.
+      if (phone && !saidOwnPhone(said, phone)) {
+        if (!name) {
+          return {
+            output: fail(
+              "ese celular no es de quien escribe: es de un cliente. Úsalo en payerPhone del cobro o guárdalo con save_contact.",
+            ),
+          };
+        }
+        phone = null;
+      }
       if (!name && !phone) return { output: fail("falta el nombre o el celular.") };
       store.setProfile({ ...profile, name: name || profile.name, phone: phone ?? profile.phone });
       const saved = [name ? `se llama ${name}` : "", phone ? `su celular es ${prettyPhone(phone)}` : ""]
@@ -1182,6 +1369,10 @@ function execute(
       return { output: corteText(store, owner, period, now) };
     }
     case "undo_last": {
+      // "Ya no", "mejor cancélalo" con un cobro por confirmar es cancelar el cobro, no borrar un apunte.
+      if (store.listCharges(owner).some((charge) => charge.status === "awaiting_confirm")) {
+        return { output: cancelWaiting(store, owner) };
+      }
       // El más reciente; con la misma hora gana el que se apuntó al final.
       const last = store.listNotes(owner).reduce<Note | null>(
         (latest, note) => (!latest || note.createdAt >= latest.createdAt ? note : latest),
@@ -1355,10 +1546,41 @@ export async function runAgent(input: {
         });
         continue;
       }
+      // Pidió un celular que no hace falta: sin a quién mandarlo, un cobro sale por QR.
+      if (reply && !tools.length && !nudged && ASKS_PHONE.test(reply) && MENTIONS_PHONE.test(reply)) {
+        const texts = recentUserText(input.store, input.owner);
+        const last = texts[texts.length - 1] ?? "";
+        const forSelf = askedForSelf(input.store, input.owner);
+        const knows = ownPhone(input.store, input.owner) !== null;
+        if ((forSelf && knows) || (!forSelf && !NAMES_PAYER.test(last))) {
+          nudged = true;
+          messages.push({ role: "assistant", content: reply });
+          messages.push({
+            role: "system",
+            content: forSelf
+              ? "Ese mensaje no se envió: pediste un celular que ya sabes (está en el contexto). Llama ahora a prepare_charge con payerName \"yo\" y lo demás que dijo la persona."
+              : "Ese mensaje no se envió: pediste un celular que no hace falta. Un cobro sin persona a quien mandarlo sale por QR (o por link si lo pidió). Llama ahora a prepare_charge con el monto que dijo la persona, sin payerName ni payerPhone. Si lo que falta es el monto, pregunta solo el monto.",
+          });
+          continue;
+        }
+      }
+      // Habló del estado de la cuenta o del modo de prueba sin consultarlo.
+      if (reply && !tools.length && !nudged && CLAIMS_ACCOUNT.test(reply)) {
+        nudged = true;
+        messages.push({ role: "assistant", content: reply });
+        messages.push({
+          role: "system",
+          content:
+            "Ese mensaje no se envió: hablaste del estado de la cuenta o del modo de prueba sin consultarlo. Si la persona preguntó por eso, llama ahora a account_status. Si no lo preguntó, contesta sin mencionarlo.",
+        });
+        continue;
+      }
       return { charge, reply, tools };
     }
     messages.push({ role: "assistant", content: result.content, tool_calls: result.toolCalls });
     const outputs: string[] = [];
+    /** Lo que otras herramientas contestaron en el mismo mensaje que armó un cobro. */
+    const aside: string[] = [];
     let final = true;
     for (const call of result.toolCalls) {
       const done = await run(
@@ -1375,8 +1597,10 @@ export async function runAgent(input: {
       tools.push({ name: call.function.name, args: call.function.arguments, output: done.output });
       outputs.push(done.output);
       if (!FINAL_TOOLS.has(call.function.name) || done.output.startsWith(FAILED)) final = false;
+      else aside.push(done.output.startsWith(DIRECT) ? done.output.slice(DIRECT.length) : done.output);
     }
-    if (charge) return { charge, reply: null, tools };
+    // "Agrega café a 35, cobra 2 y dime el corte": la tarjeta sale, y lo demás va antes, no se pierde.
+    if (charge) return { charge, reply: aside.length ? aside.join("\n") : null, tools };
     const notice = outputs.find((output) => output.startsWith(DIRECT));
     if (notice) return { charge, reply: notice.slice(DIRECT.length), tools };
     // Todo salió bien y el resultado ya es el mensaje: se manda tal cual, con sus cifras exactas.

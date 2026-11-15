@@ -3,6 +3,7 @@ import QRCode from "qrcode";
 import {
   chargeCard,
   DEFAULT_CONCEPT,
+  isNumberLabel,
   PAYER_OPEN,
   PAYER_SELF,
   prettyPhone,
@@ -239,7 +240,9 @@ async function confirm(deps: FlowDeps, owner: string, chargeId: string): Promise
       const text =
         charge.payerName === PAYER_SELF
           ? `Listo, ya salió. Te llega la notificación CoDi por ${amount} en la app de tu banco: ábrela y acéptala. Tienes ${wait}. Te aviso cuando caiga.${again}`
-          : `Listo, ya salió. A ${charge.payerName} le llega la notificación CoDi por ${amount} en la app de su banco (${prettyPhone(charge.payerPhone ?? "")}). Tiene ${wait} para aceptarla. Te aviso cuando caiga.${again}`;
+          : isNumberLabel(charge.payerName)
+            ? `Listo, ya salió. Al ${charge.payerName} le llega la notificación CoDi por ${amount} en la app de su banco. Tiene ${wait} para aceptarla. Te aviso cuando caiga.${again}`
+            : `Listo, ya salió. A ${charge.payerName} le llega la notificación CoDi por ${amount} en la app de su banco (${prettyPhone(charge.payerPhone ?? "")}). Tiene ${wait} para aceptarla. Te aviso cuando caiga.${again}`;
       remember(deps.store, owner, "assistant", text, now);
       return [{ kind: "text", to: owner, text }];
     }
@@ -319,22 +322,70 @@ const NO = /^(cancelar|cancela|cancelo|no)[.!]*$/i;
 const EXPLICIT = /^(confirmar|confirma|confirmo|cancelar|cancela|cancelo)[.!]*$/i;
 
 /**
+ * Con una tarjeta por confirmar, la gente no escribe "CONFIRMAR": escribe "sí,
+ * mándalo", "va, dale" o "ya no, gracias". Solo cuentan mensajes cortos, sin
+ * números y sin un "pero" o un "mejor" que cambien el cobro.
+ */
+const YES_PHRASE =
+  /^(s[ií]+|sip|simon|sim[oó]n|va|vas|dale|ok|okay|okey|sale|claro|correcto|exacto|adelante|listo|as[ií] es|de acuerdo|est[aá] bien|confirm\w*|m[aá]ndal[oa]|env[ií]al[oa]|h[aá]zlo|c[oó]bral[oa]|[eé]chal[eo])(?![a-záéíóúñ])/i;
+const NO_PHRASE =
+  /^(no+\b|nel\b|cancel\w*|mejor (no|cancel\w*)|ya no\b|siempre no\b|olv[ií]dal[oa]|d[eé]jal[oa]|b[oó]rral[oa]|qu[ií]tal[oa]|no lo mandes|no lo env[ií]es)/i;
+const CHANGES_IT = /\d|\bpero\b|\bmejor (que|por|con|de|un|una|el|la|a)\b|\bcambia|\bsolo que\b/i;
+
+function confirmIntent(clean: string): "yes" | "no" | null {
+  if (YES.test(clean)) return "yes";
+  if (NO.test(clean)) return "no";
+  if (clean.length > 40 || CHANGES_IT.test(clean)) return null;
+  if (NO_PHRASE.test(clean)) return "no";
+  if (YES_PHRASE.test(clean)) return "yes";
+  return null;
+}
+
+/**
  * Donde no hay botones (WhatsApp por puente), la tarjeta se contesta con
- * CONFIRMAR o CANCELAR. Eso lo resuelve la caja, nunca el modelo: un
- * "cancelar" suelto no debe terminar borrando un apunte.
+ * palabras. Eso lo resuelve la caja, nunca el modelo: un "cancelar" suelto no
+ * debe terminar borrando un apunte, ni un "sí, mándalo" quedarse sin mandar.
  */
 async function onConfirmWord(deps: FlowDeps, owner: string, clean: string): Promise<Outbound[] | null> {
-  const yes = YES.test(clean);
-  if (!yes && !NO.test(clean)) return null;
   const waiting = deps.store
     .listCharges(owner)
     .reverse()
     .find((charge) => charge.status === "awaiting_confirm");
-  if (waiting) return onButton(deps, owner, `${yes ? "c" : "x"}:${waiting.id}`);
+  if (waiting) {
+    const intent = confirmIntent(clean);
+    return intent ? onButton(deps, owner, `${intent === "yes" ? "c" : "x"}:${waiting.id}`) : null;
+  }
   if (EXPLICIT.test(clean)) {
     return [{ kind: "text", to: owner, text: "No hay ningún cobro esperando confirmación. Dime qué cobro y lo armo." }];
   }
   return null;
+}
+
+const CORTE =
+  /^(el |dame el |hazme el |mu[eé]strame el |p[aá]same el |mi |ver el )?corte( de caja)?( de| del)?( hoy| ayer| la semana| esta semana| semana| el mes| este mes| mes| el mes pasado| mes pasado)?[\s.!?¿]*$/i;
+const HELP_WORD = /^[¿¡\s]*(ayuda|help|men[uú]|opciones|comandos|qu[eé] (puedes|sabes) hacer|c[oó]mo te uso|qu[eé] haces)[\s.!?]*$/i;
+
+/**
+ * Lo que no tiene dos lecturas se contesta sin el modelo: "corte" es el corte
+ * de caja aunque haya un producto que se llame corte, y "ayuda" es la ayuda.
+ * Devuelve la herramienta que lo resuelve, para que quede en la memoria como tal.
+ */
+function shortcut(clean: string): { name: string; args: Record<string, string> } | null {
+  const corte = CORTE.exec(clean);
+  if (corte) {
+    const when = (corte[4] ?? "").trim().toLowerCase();
+    const period = when.includes("pasado")
+      ? "mes_pasado"
+      : when.includes("ayer")
+        ? "ayer"
+        : when.includes("semana")
+          ? "semana"
+          : when.includes("mes")
+            ? "mes"
+            : "hoy";
+    return { name: "get_balance", args: { period } };
+  }
+  return HELP_WORD.test(clean) ? { name: "show_help", args: {} } : null;
 }
 
 /** Lo más largo que se le pasa al modelo de un solo mensaje. */
@@ -386,6 +437,7 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
       : [];
   }
   remember(deps.store, owner, "user", clean, now);
+  const direct = shortcut(clean);
   let result: Awaited<ReturnType<typeof runAgent>>;
   try {
     result = await runAgent({
@@ -393,7 +445,13 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
       config: deps.config,
       owner,
       now,
-      complete: deps.complete,
+      // Un atajo es la misma herramienta de siempre, pedida por la caja y no por el modelo.
+      complete: direct
+        ? async () => ({
+            content: null,
+            toolCalls: [{ id: "atajo", type: "function", function: { name: direct.name, arguments: JSON.stringify(direct.args) } }],
+          })
+        : deps.complete,
       services: servicesOf(deps),
     });
   } catch (error) {
@@ -405,8 +463,11 @@ async function onText(deps: FlowDeps, owner: string, text: string): Promise<Outb
   }
   if (result.charge) {
     const card = chargeCard(result.charge, !!deps.config.testMaxCents, now);
-    remember(deps.store, owner, "assistant", card, now, result.tools);
+    // Si en el mismo mensaje pidió algo más (guardar un producto, el corte), eso va antes de la tarjeta.
+    const before = result.reply?.trim();
+    remember(deps.store, owner, "assistant", before ? `${before}\n\n${card}` : card, now, result.tools);
     return [
+      ...(before ? [{ kind: "text" as const, to: owner, text: before }] : []),
       {
         kind: "buttons",
         to: owner,
@@ -489,7 +550,9 @@ function paidText(charge: Charge, settled: string): string {
       ? ", lo pagaste tú"
       : charge.payerName === PAYER_OPEN
         ? ""
-        : ` de ${charge.payerName}`;
+        : isNumberLabel(charge.payerName)
+          ? ` del ${charge.payerName}`
+          : ` de ${charge.payerName}`;
   const tip = charge.tipCents ? ` Más ${formatMxn(charge.tipCents)} de propina.` : "";
   return `Ya cayó: ${amount}${from}${conceptTail(charge)}. Confirmado por CoDi.${tip}${settled}`;
 }
